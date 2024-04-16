@@ -20,20 +20,27 @@ by `None` on the same line, though it can be put on a new line.
 
 This language is whitespace sensitive, and the spacing must be consistent. Fields are defined by
 using the desired name (e.g. `eid` for entity id), with it's matching type (e.g. `VInt`, meaning
-`VarInt`).
+`VarInt`). The order of how fields are generated are also dependent on the order of the
+definitions in the code, with `eid` being before `uuid`, as an example.
 
 Fields may also be prefixed by the protocol version it was introduced in, an example of this being
 `(759) headYaw: Angle`, which is to be interpreted as the field not existing beforehand, and it
 being defined from that protocol onwards.
 
-(To be finished.)
+As the type of the data may change between protocol versions, it is possible to use the protocol
+version prefixed field definition to override the types defined. For example, the `data` field
+was introduced in protocol version 47, with the type `SInt32` (a signed 4 bit integer), but was
+then updated to `VInt` (a VarInt) in protocol version 759. Adding on to this syntax, if a field
+was removed in a certain protocol version, it is also possible to remove a defined field if you
+use `None` as the type. For example, while this isn't the case here, you could do
+`(800) data: None` to remove the `data` field in fictional protocol version 800.
 
 ## Example
 ```
 SpawnEntity(4, 0x0C -> 107, 0x00 -> 762, 0x01) -> Client:
   eid: VInt
   uuid: UUID
-  (0) typ: SInt8
+  typ: SInt8
   (477) typ: VInt
   pos: Vec3[Float64]
   pitch: Angle

@@ -1,46 +1,70 @@
 import std/[strformat, strutils]
 
 type
-  TkType = enum
-    Ident, Num, Null, OpenParen, CloseParen, OpenBrack,
+  TkType* = enum
+    Skip, Ident, Num, Null, OpenParen, CloseParen, OpenBrack,
     CloseBrack, Comma, Arrow, Colon, Indent, Dedent
 
-  Token = object
-    typ: TkType
-    val: string
-
-  ProtoIDPair = tuple[proto: NumLiteral, packet: NumLiteral]
-  ProtoTypTriad = tuple[proto: NumLiteral, typ: Expression, order: int]
-
-  AstNode* = ref object of RootObj
-
-  Expression* = ref object of AstNode
-
-  Identifier* = ref object of Expression
+  Token* = object
+    typ*: TkType
     val*: string
+    startLine*, startColumn*: int
+    when defined(napkinTokenIds):
+      id: int
 
-  Index* = ref object of Expression
-    indexer*, indexee*: Identifier
+  ProtoIDPair* = tuple[proto: int, packet: int]
+  ProtoTypTriad* = tuple[proto: int, typ: AstNode, order: int] # typ: Identifier | Index
 
-  NumLiteral* = ref object of Expression
-    val*: int
+  AstKind* = enum
+    NullLiteral,
+    Identifier,
+    Index,
+    FieldDef,
+    PacketDef,
+    PacketDefs
 
-  NullLiteral* = ref object of Expression
+  AstNode* = distinct int
 
-  FieldDef* = ref object of AstNode
-    name*: Identifier
-    protoTypTriads: seq[ProtoTypTriad]
+  AstData* = object
+    case kind*: AstKind
+      of NullLiteral:
+        discard
+      
+      of Identifier:
+        strVal*: string
 
-  PacketDefs* = ref object of AstNode
-    packets*: seq[PacketDef]
+      of Index:
+        indexer*: AstNode # Identifier
+        indexee*: AstNode # Identifier
 
-  PacketDef* = ref object of AstNode
-    name*: Identifier
-    protoIdPairs*: seq[ProtoIDPair]
-    direction*: Identifier # Must be 'Client' or 'Server'
-    fieldDefs*: seq[FieldDef]
+      of FieldDef:
+        fName*: AstNode # Identifier
+        protoTypTriads*: seq[ProtoTypTriad]
 
-template nl(i: int): NumLiteral = NumLiteral(val: i)
+      of PacketDef:
+        pName*: AstNode # Identifier
+        protoIdPairs*: seq[ProtoIDPair]
+        direction*: AstNode # Identifier, 'Client' or 'Server'
+        fieldDefs*: seq[AstNode] # seq[FieldDef]
+
+      of PacketDefs:
+        packets*: seq[AstNode] # seq[PacketDef]
+
+  Lexer* = object
+    # TODO: Tab support
+    code: string # TODO: Streams?
+    pos, indentDepth: int
+    column, line: int = 1
+    when defined(napkinTokenIds):
+      tokenId: int
+
+  State* = object
+    nodes: seq[AstData]
+
+proc `[]`*(state: State, idx: AstNode): AstData =
+  result = state.nodes[idx.int]
+
+proc nodes*(state: State): seq[AstData] = state.nodes
 
 proc `$`*(token: Token, depth: int = 1): string =
   let indent = repeat("  ", depth)
@@ -48,6 +72,9 @@ proc `$`*(token: Token, depth: int = 1): string =
   result &= &"{indent}val: "
 
   result.addQuoted(token.val)
+  when defined(napkinTokenIds):
+    result &= &"\n{indent}id: {token.id}"
+
   result &= "\n)"
 
 proc `$`*(tokens: seq[Token]): string =
@@ -62,80 +89,108 @@ proc `$`*(tokens: seq[Token]): string =
   result &= "\n]"
   result &= ")"
 
-var code = readFile("test.nmp")
-var tokens = newSeq[Token]()
-var ast = PacketDefs()
-var pos: int
-var indentDepth = 0
+var lexer = Lexer(code: readFile("test.nmp"))
 
-template cchar: char = code[pos]
+template atEnd(l: Lexer): bool = l.pos >= l.code.len
+template cchar(l: Lexer): char = l.code[l.pos]
 
-proc lexIndent =
-  var lexeme: string
+when defined(napkinTokenIds):
+  template setTokenId(t: var Token) =
+    t.id = lexer.tokenId
+    inc l.tokenId
+else:
+  template setTokenId(t: var Token) = discard
 
-  while cchar == ' ':
-    lexeme &= cchar
-    inc pos
-
-  if indentDepth == 0:
-    indentDepth = lexeme.len
-    tokens.add Token(typ: Indent, val: lexeme)
+proc next(l: var Lexer) =
+  if l.cchar == '\n':
+    inc l.line
+    l.column = 1
 
   else:
-    if indentDepth != lexeme.len:
-      echo "The spacing isn't consistent, expected ", $indentDepth, "spaces!"
+    inc l.column
 
+  inc l.pos
 
-proc lex =
-  while pos < code.len:
-    if cchar.isAlphaAscii:
-      var lexeme: string
-      while cchar.isAlphaNumeric:
-        lexeme &= cchar
-        inc pos
+proc lexIdentifier(l: var Lexer): Token =
+  var lexeme: string
 
-      tokens.add Token(typ:
-        (if lexeme != "Null": Ident else: Null), val: lexeme)
+  while l.cchar.isAlphaNumeric:
+    lexeme &= l.cchar
+    l.next()
+
+  result = Token(typ: (if lexeme != "Null": Ident else: Null), val: lexeme)
+  result.setTokenId()
+
+proc lexNumOrArr(l: var Lexer): Token =
+  var lexeme = $l.cchar
+  l.next()
+
+  if lexeme[0] == '-':
+    if l.cchar == '>':
+      lexeme &= l.cchar
+      l.next()
+      result = Token(typ: Arrow, val: lexeme)
+      result.setTokenId()
+      return
+      
+    elif not l.cchar.isDigit:
+      lexeme &= l.cchar
+      l.next()
+      quit &"{lexeme} isn't a valid number!"
+
+  var isHex = false
+
+  if l.cchar == 'x':
+    isHex = true
+    lexeme &= 'x'
+    l.next()
+
+  template validChars: string =
+    if isHex:
+      "0123456789ABCDEFabcdef"
+    else:
+      "0123456789"
+
+  while l.cchar in validChars:
+    lexeme &= l.cchar
+    l.next()
+
+  if isHex:
+    lexeme = $parseHexInt(lexeme)
+
+  result = Token(typ: Num, val: lexeme)
+  result.setTokenId()
+
+proc lexIndent(l: var Lexer): Token =
+  var lexeme: string
+
+  while l.cchar == ' ':
+    lexeme &= l.cchar
+    l.next()
+
+  if l.indentDepth == 0:
+    l.indentDepth = lexeme.len
+    result = Token(typ: Indent, val: lexeme)
+    result.setTokenId()
+    return
+
+  else:
+    if l.indentDepth != lexeme.len:
+      quit &"The spacing isn't consistent, expected {l.indentDepth} spaces! {l.line} '{lexeme}'"
+
+proc lex(l: var Lexer): seq[Token] =
+  # TODO: Error reporting function
+  while not l.atEnd:
+    if l.cchar.isAlphaAscii:
+      result &= l.lexIdentifier()
       continue
 
-    elif cchar.isDigit or cchar == '-':
-      var lexeme = $cchar
-      inc pos
-
-      if lexeme[0] == '-':
-        if cchar == '>':
-          tokens.add Token(typ: Arrow, val: lexeme & cchar)
-          inc pos
-          continue
-        if not cchar.isDigit:
-          echo lexeme & cchar, " isn't a valid number!"
-          continue
-
-      var isHex = false
-
-      if cchar == 'x':
-        isHex = true
-        lexeme &= 'x'
-        inc pos
-
-      template validChars: string =
-        if isHex:
-          "0123456789ABCDEFabcdef"
-        else:
-          "0123456789"
-
-      while cchar in validChars:
-        lexeme &= cchar
-        inc pos
-
-      if isHex:
-        lexeme = $parseHexInt(lexeme)
-
-      tokens.add Token(typ: Num, val: lexeme)
+    elif l.cchar.isDigit or l.cchar == '-':
+      result &= l.lexNumOrArr()
       continue
 
     else:
-      var typ = case cchar
+      var typ = case l.cchar
         of '(': OpenParen
         of ')': CloseParen
         of '[': OpenBrack
@@ -143,38 +198,43 @@ proc lex =
         of ':': Colon
         of ',': Comma
         of ' ':
-          inc pos
+          l.next()
           continue
 
         else:
-          if cchar != '\n':
-            echo cchar, " isn't an implemented token!"
-            inc pos
+          if l.cchar != '\n':
+            quit &"{l.cchar} isn't an implemented token!"
 
           else:
-            while cchar == '\n':
-              inc pos
-              if pos >= code.len:
-                indentDepth = 0
-                tokens.add Token(typ: Dedent)
-                break
+            while l.cchar == '\n':
+              l.next()
 
-              elif cchar != ' ':
-                indentDepth = 0
-                tokens.add Token(typ: Dedent)
+              if l.atEnd:
+                l.indentDepth = 0
+                result &= Token(typ: Dedent)
+                result[^1].setTokenId()
+                return
 
-              else: lexIndent()
+              elif l.cchar != ' ':
+                l.indentDepth = 0
+                result &= Token(typ: Dedent)
+                result[^1].setTokenId()
 
+              else:
+                let tkn = l.lexIndent()
+                if tkn.typ != Skip:
+                  result &= tkn
           continue
 
-      tokens.add Token(typ: typ, val: $cchar)
-      inc pos
+      result &= Token(typ: typ, val: $l.cchar)
+      result[^1].setTokenId()
+      l.next()
 
 
-lex()
-
+let tokens = lexer.lex()
 echo tokens
 
+#[
 pos = 0
 template ctoken: Token = tokens[pos]
 
@@ -316,3 +376,4 @@ proc parse =
 
 parse()
 echo ast.repr
+]#
