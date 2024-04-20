@@ -50,3 +50,9 @@ SpawnEntity(4, 0x0C -> 107, 0x00 -> 762, 0x01) -> Client:
   (759) data: VInt
   velocity: Vec3[SInt16]
 ```
+
+## Credit
+Honestly I wouldn't of came up with this format if [dewycube](https://github.com/dewycube) hadn't
+originally came up with it! He originally discussed it in the Minecraft Protocol discord server,
+which can be found at <https://discord.com/invite/Tf4xwK3Ke7>, or via
+[wiki.vg](https://wiki.vg/Main_Page)!

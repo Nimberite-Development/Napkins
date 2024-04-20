@@ -1,12 +1,26 @@
-SpawnEntity(4, 0x0C -> 107, 0x00 -> 762, 0x01) -> Client:
-  eid: VInt
+Colour -> Enum[VInt]:
+  Pink, Blue, Red, Green, Yellow, Purple, White
+
+BossBar(1, 0x0A) -> Client:
   uuid: UUID
-  typ: SInt8
-  (477) typ: VInt
-  pos: Vec3[Float64]
-  pitch: Angle
-  yaw: Angle
-  (759) headYaw: Angle
-  (47) data: SInt32
-  (759) data: VInt
-  velocity: Vec3[SInt16]
+  action: Enum[VInt] ->
+    {0} Add:
+      title: TextComponent
+      health: Float
+      colour: Colour
+      division: ... # Similarly defined like the 'Colour' definition
+
+    {1} Remove: None
+
+    {2} UpdateHealth:
+      health: Float
+
+    {3} UpdateTitle:
+      title: TextComponent
+
+    {4} UpdateStyle:
+      colour: Colour
+      dividers: None
+
+    {5} UpdateFlags:
+      flags: UByte
