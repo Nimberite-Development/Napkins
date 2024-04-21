@@ -8,5 +8,5 @@ let tokens = lxr.lex()
 
 echo tokens
 
-var ast = parse(tokens).nodes
+var ast = parse(tokens, "test.nmp", false).nodes
 echo ast.repr

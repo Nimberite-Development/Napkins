@@ -6,7 +6,7 @@ import ./lexer
 
 type
   ParserFailureReason* = enum
-    UnexpectedToken, PlaceholderTokenFound
+    UnexpectedToken, ExpectedEnumDefinition, PlaceholderTokenFound
 
   NapkinsParserError* = object of CatchableError
     fileName*: string
@@ -15,30 +15,24 @@ type
 
   # proto: NumLiteral
   # packet: Identifier
-  ProtoIDPair* = tuple[proto, packet: AstPointer]
+  ProtoIDPair* = tuple[proto: AstNode, packet: AstNode]
 
   # proto: NumLiteral
   # typ: Identifier | Index
   # order: int #? Order is defined on the parser level
-  ProtoTypTriad* = tuple[proto: AstPointer, typ: AstPointer, order: int]
-
-  # val: NumLiteral
-  # name: Identifier
-  # Used for defining enums
-  ValueNamePair* = tuple[val: AstPointer, name: AstPointer]
+  ProtoTypTriad* = tuple[proto: AstNode, typ: AstNode, order: int]
 
   AstKind* = enum
     NullLiteral,
     NumLiteral,
     Identifier,
     Index,
-    EnumDef,
-    FieldDef,
     PacketDef,
+    EnumTypeDef,
+    EnumFieldDef,
+    PacketFieldDef
 
-  AstPointer* = distinct int
-
-  AstNode* = object
+  AstNode* {.acyclic.} = ref object
     # TODO: Add line info data - Use `std/macros`' `LineInfo` or our own type?
     case kind*: AstKind
       of NullLiteral:
@@ -51,22 +45,27 @@ type
         strVal*: string
 
       of Index:
-        indexer*: AstPointer # Identifier
-        indexee*: AstPointer # Identifier
+        indexer*: AstNode # Identifier
+        indexee*: AstNode # Identifier
 
-      of FieldDef:
-        fName*: AstPointer # Identifier
+      of PacketFieldDef:
+        pfName*: AstNode # Identifier
         protoTypTriads*: seq[ProtoTypTriad]
 
-      of EnumDef:
-        eName*: AstPointer # Identifier
-        values*: seq[AstPointer] # seq[]
+      of EnumFieldDef:
+        efName: AstNode # Identifier
+        efValue: int # NumLiteral
+
+
+      of EnumTypeDef:
+        eName*: AstNode # Identifier
+        values*: seq[AstNode] # seq[EnumFieldDef]
 
       of PacketDef:
-        pName*: AstPointer # Identifier
+        pName*: AstNode # Identifier
         protoIdPairs*: seq[ProtoIDPair]
-        direction*: AstPointer # Identifier, 'Client' or 'Server'
-        fieldDefs*: seq[AstPointer] # seq[FieldDef]
+        direction*: AstNode # Identifier, 'Client' or 'Server'
+        fieldDefs*: seq[AstNode] # seq[PacketFieldDef]
 
     when defined(napkinNodeIds):
       id: int
@@ -78,8 +77,48 @@ type
     tokens: seq[Token]
     nodes: seq[AstNode]
 
-proc `[]`*(state: State, idx: AstPointer): AstNode =
-  result = state.nodes[idx.int]
+  BuiltinType* = object
+    name*: string
+    params*: seq[set[AstKind]]
+
+proc builtinType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): BuiltinType =
+  BuiltinType(name: name, params: @params)
+
+template isGeneric*(t: BuiltinType): bool = bool(t.params.len)
+
+# TODO: Text Component, JSON Text Component, Entity Metadata, Slot
+const NapkinTypes* = [
+  # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
+  builtinType("Array", {Identifier, NumLiteral}, {Identifier}),
+  builtinType("VInt32"),     # VarInt
+  builtinType("VInt64"),     # VarLong
+  builtinType("UInt8"),      # Unsigned Byte
+  builtinType("UInt16"),     # Unsigned Short
+  builtinType("SInt8"),      # Signed Byte
+  builtinType("SInt16"),     # Signed Short
+  builtinType("SInt32"),     # Signed Int
+  builtinType("SInt64"),     # Signed Long
+  builtinType("Float32"),    # Float
+  builtinType("Float64"),    # Double
+  builtinType("Bool"),       # Boolean
+  # String[MSize] - MSize meaning the maximum length as a NumLiteral
+  builtinType("String", {NumLiteral}),
+  builtinType("Identifier"), # Identifier
+  builtinType("UUID"),       # UUID
+  # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
+  builtinType("Optional", {Identifier, Identifier}),
+  builtinType("Position"),   # Position
+  # Enum[T] - T refers to the type
+  builtinType("Enum", {Identifier}),
+  # NBT[Size] - Size refers to the length using another field for definition
+  builtinType("NBT", {Identifier})
+]
+
+proc contains*(nt: openArray[BuiltinType], name: string): bool =
+  for t in nt:
+    if t.name == name: return true
+
+  return false
 
 proc nodes*(state: State): seq[AstNode] = state.nodes
 
@@ -104,14 +143,40 @@ proc eat(s: var State): Token =
     s.report "Placeholder tokens are only to be used during the lexing stage for syntax validation!",
       PlaceholderTokenFound, result
 
+proc parseEnum*(s: var State, ident: Token): AstNode =
+  result = AstNode(kind: EnumTypeDef, eName: AstNode(kind: Identifier, strVal: ident.val))
+
+  let tkOne = s.eat()
+
+  if tkOne.typ != Ident:
+    s.report "Expected an identifier!", UnexpectedToken, tkOne
+
+  if tkOne.val != "Enum":
+    s.report "Expected 'Enum'!", ExpectedEnumDefinition, tkOne
+
 proc parse*(tokens: seq[Token], fileName: string = "<string>",
     throwOnError: bool = true): State =
-  result = State(tokens: tokens, throwOnError: throwOnError)
+  result = State(tokens: tokens, fileName: fileName, throwOnError: throwOnError)
+  # Use lexer object instead? Would provide more info with less redundancy
 
   while not result.atTkEnd:
-    let tk = result.eat()
+    let tkOne = result.eat()
 
-    if tk.typ != Ident:
-      result.report "Expected an identifier!", UnexpectedToken, tk
+    if tkOne.typ != Ident:
+      result.report "Expected an identifier!", UnexpectedToken, tkOne
 
-    # TODO: Rest of the parser
+    let tkTwo = result.eat()
+
+    case tkTwo.typ
+      of Arrow:
+        result.parseEnum(tkOne)
+
+      of OpenParen:
+        discard
+
+      else:
+        result.report "Expected an arrow or an open parenthesis!", UnexpectedToken, tkTwo
+
+
+    # Unimplemented codepath
+    result.report "Unimplemented behaviour from this point on.", UnexpectedToken, result.eat()
