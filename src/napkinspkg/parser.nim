@@ -152,7 +152,7 @@ proc parseEnum*(s: var State, ident: Token): AstNode =
     s.report "Expected an identifier!", UnexpectedToken, tkOne
 
   if tkOne.val != "Enum":
-    s.report "Expected 'Enum'!", ExpectedEnumDefinition, tkOne
+    s.report "Expected 'Enum'!", ExpectedEnumDefinition, tkOns
 
 proc parse*(tokens: seq[Token], fileName: string = "<string>",
     throwOnError: bool = true): State =
@@ -169,7 +169,7 @@ proc parse*(tokens: seq[Token], fileName: string = "<string>",
 
     case tkTwo.typ
       of Arrow:
-        result.parseEnum(tkOne)
+        result.nodes.add result.parseEnum(tkOne)
 
       of OpenParen:
         discard
