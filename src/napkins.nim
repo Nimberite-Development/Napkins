@@ -9,4 +9,6 @@ let tokens = lxr.lex()
 echo tokens
 
 var ast = parse(tokens, "test.nmp", true).nodes
-echo ast.repr
+
+for i in ast:
+  echo $i

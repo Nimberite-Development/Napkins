@@ -1,5 +1,5 @@
-Colour -> Enum[VInt]:
-  Pink, Blue, Red, Green, Yellow, Purple, White
+#Colour -> Enum[VInt32]:
+#  Pink, Blue, Red, Green, Yellow, {5} Purple, White
 
 BossBar(1, 0x0A) -> Client:
   uuid: UUID
@@ -8,7 +8,7 @@ BossBar(1, 0x0A) -> Client:
       title: TextComponent
       health: Float
       colour: Colour
-      division: ... # Similarly defined like the 'Colour' definition
+      division: None # Similarly defined like the 'Colour' definition
 
     {1} Remove: None
 

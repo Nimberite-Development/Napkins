@@ -1,126 +1,10 @@
 import std/[
-  strformat
+  strformat,
+  strutils
 ]
 
 import ./lexer
-
-type
-  ParserFailureReason* = enum
-    UnexpectedToken, ExpectedEnumDefinition, PlaceholderTokenFound
-
-  NapkinsParserError* = object of CatchableError
-    fileName*: string
-    reason*: ParserFailureReason
-    token*: Token
-
-  # proto: NumLiteral
-  # packet: Identifier
-  ProtoIDPair* = tuple[proto: AstNode, packet: AstNode]
-
-  # proto: NumLiteral
-  # typ: Identifier | Index
-  # order: int #? Order is defined on the parser level
-  ProtoTypTriad* = tuple[proto: AstNode, typ: AstNode, order: int]
-
-  AstKind* = enum
-    NullLiteral,
-    NumLiteral,
-    Identifier,
-    Index,
-    PacketDef,
-    EnumTypeDef,
-    EnumFieldDef,
-    PacketFieldDef
-
-  AstNode* {.acyclic.} = ref object
-    # TODO: Add line info data - Use `std/macros`' `LineInfo` or our own type?
-    case kind*: AstKind
-      of NullLiteral:
-        discard
-
-      of NumLiteral:
-        numVal*: int
-      
-      of Identifier:
-        strVal*: string
-
-      of Index:
-        indexer*: AstNode # Identifier
-        indexee*: AstNode # Identifier
-
-      of PacketFieldDef:
-        pfName*: AstNode # Identifier
-        protoTypTriads*: seq[ProtoTypTriad]
-
-      of EnumFieldDef:
-        efName: AstNode # Identifier
-        efValue: int # NumLiteral
-
-
-      of EnumTypeDef:
-        eName*: AstNode # Identifier
-        values*: seq[AstNode] # seq[EnumFieldDef]
-
-      of PacketDef:
-        pName*: AstNode # Identifier
-        protoIdPairs*: seq[ProtoIDPair]
-        direction*: AstNode # Identifier, 'Client' or 'Server'
-        fieldDefs*: seq[AstNode] # seq[PacketFieldDef]
-
-    when defined(napkinNodeIds):
-      id: int
-
-  State* = object
-    throwOnError*: bool ## Throws an error instead of quiting
-    fileName: string
-    tkPos, ndPos: int
-    tokens: seq[Token]
-    nodes: seq[AstNode]
-
-  BuiltinType* = object
-    name*: string
-    params*: seq[set[AstKind]]
-
-proc builtinType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): BuiltinType =
-  BuiltinType(name: name, params: @params)
-
-template isGeneric*(t: BuiltinType): bool = bool(t.params.len)
-
-# TODO: Text Component, JSON Text Component, Entity Metadata, Slot
-const NapkinTypes* = [
-  # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
-  builtinType("Array", {Identifier, NumLiteral}, {Identifier}),
-  builtinType("VInt32"),     # VarInt
-  builtinType("VInt64"),     # VarLong
-  builtinType("UInt8"),      # Unsigned Byte
-  builtinType("UInt16"),     # Unsigned Short
-  builtinType("SInt8"),      # Signed Byte
-  builtinType("SInt16"),     # Signed Short
-  builtinType("SInt32"),     # Signed Int
-  builtinType("SInt64"),     # Signed Long
-  builtinType("Float32"),    # Float
-  builtinType("Float64"),    # Double
-  builtinType("Bool"),       # Boolean
-  # String[MSize] - MSize meaning the maximum length as a NumLiteral
-  builtinType("String", {NumLiteral}),
-  builtinType("Identifier"), # Identifier
-  builtinType("UUID"),       # UUID
-  # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
-  builtinType("Optional", {Identifier, Identifier}),
-  builtinType("Position"),   # Position
-  # Enum[T] - T refers to the type
-  builtinType("Enum", {Identifier}),
-  # NBT[Size] - Size refers to the length using another field for definition
-  builtinType("NBT", {Identifier})
-]
-
-proc contains*(nt: openArray[BuiltinType], name: string): bool =
-  for t in nt:
-    if t.name == name: return true
-
-  return false
-
-proc nodes*(state: State): seq[AstNode] = state.nodes
+import ./parser/types
 
 proc report(s: State, msg: string, reason: ParserFailureReason, token: Token) =
   template errstr: string = &"{s.fileName}:{token.startLine}:{token.startColumn}"
@@ -143,16 +27,164 @@ proc eat(s: var State): Token =
     s.report "Placeholder tokens are only to be used during the lexing stage for syntax validation!",
       PlaceholderTokenFound, result
 
-proc parseEnum*(s: var State, ident: Token): AstNode =
+proc parseEnumField(s: var State, order: int): AstNode =
+  result = AstNode(kind: EnumFieldDef)
+
+  # Parse the version that the enum field is present in
+  var currToken = s.eat()
+  if currToken.typ == OpenParen:
+    currToken = s.eat()
+    if currToken.typ != Num:
+      s.report "Expected a number!", UnexpectedToken, currToken
+
+    result.efProto = AstNode(kind: NumLiteral, numVal: currToken.val.parseInt)
+
+    currToken = s.eat()
+    if currToken.typ != CloseParen:
+      s.report "Expected a close parenthesis!", UnexpectedToken, currToken
+
+    currToken = s.eat()
+
+  else:
+    result.efProto = AstNode(kind: NumLiteral, numVal: 0)
+
+  # Parse the value that the enum field is set to
+  if currToken.typ == OpenBrace:
+    currToken = s.eat()
+    if currToken.typ != Num:
+      s.report "Expected a number!", UnexpectedToken, currToken
+
+    result.efValue = AstNode(kind: NumLiteral, numVal: currToken.val.parseInt)
+
+    currToken = s.eat()
+    if currToken.typ != CloseBrace:
+      s.report "Expected a close brace!", UnexpectedToken, currToken
+
+    currToken = s.eat()
+
+  else:
+    result.efValue = AstNode(kind: NumLiteral, numVal: 0)
+
+  # Parse the enum identifier
+  result.efName = AstNode(kind: Identifier, strVal: currToken.val)
+  # Set the order definition for the enum field
+  result.efOrder = order
+
+proc parseEnum(s: var State, ident: Token, fieldParsingMode: bool = false): AstNode =
   result = AstNode(kind: EnumTypeDef, eName: AstNode(kind: Identifier, strVal: ident.val))
 
   let tkOne = s.eat()
 
+  # Parse the enum name
   if tkOne.typ != Ident:
     s.report "Expected an identifier!", UnexpectedToken, tkOne
 
+  # Ensure it's an enum
   if tkOne.val != "Enum":
-    s.report "Expected 'Enum'!", ExpectedEnumDefinition, tkOns
+    s.report "Expected 'Enum'!", ExpectedEnumDefinition, tkOne
+
+  # Parse what type the enum is of (numeric types only, currently)
+  var currToken = s.eat()
+  if currToken.typ != OpenBrack:
+    s.report "Expected an open bracket!", UnexpectedToken, currToken
+
+  currToken = s.eat()
+  if currToken.typ != Ident:
+    s.report "Expected an identifier!", GenericWithMissingParameters, currToken
+  # TODO: Validate this in a later stage or now?
+  result.eType = AstNode(kind: Identifier, strVal: currToken.val)
+
+  currToken = s.eat()
+  if currToken.typ != CloseBrack:
+    s.report "Expected a close bracket!", UnexpectedToken, currToken
+
+  # Different ways of parsing enums depending on location
+  currToken = s.eat()
+  if not fieldParsingMode:
+    if currToken.typ != Colon:
+      s.report "Expected a colon!", UnexpectedToken, currToken
+
+  else:
+    if currToken.typ != Arrow:
+      s.report "Expected an arrow!", UnexpectedToken, currToken
+
+  currToken = s.eat()
+  if currToken.typ != Indent:
+    s.report "Expected an indented block!", UnexpectedToken, currToken
+
+  var order = 0
+
+  # Parse the enum fields
+  while not s.atTkEnd:
+    result.eFieldDefs.add s.parseEnumField(order)
+
+    currToken = s.eat()
+    case currToken.typ
+      of Comma:
+        inc order
+        continue
+
+      of Dedent:
+        break
+
+      else:
+        s.report "Expected a comma or a dedent!", UnexpectedToken, currToken
+
+proc parseProtoIDPair(s: var State): ProtoIDPair =
+  var currToken = s.eat()
+  if currToken.typ != Num:
+    s.report "Expected a number!", UnexpectedToken, currToken
+  result.proto = AstNode(kind: NumLiteral, numVal: currToken.val.parseInt)
+
+  currToken = s.eat()
+  if currToken.typ != Comma:
+    s.report "Expected a comma!", UnexpectedToken, currToken
+
+  currToken = s.eat()
+  if currToken.typ != Num:
+    s.report "Expected a number!", UnexpectedToken, currToken
+  result.packet = AstNode(kind: NumLiteral, numVal: currToken.val.parseInt)
+
+proc parsePacket(s: var State, ident: Token): AstNode =
+  result = AstNode(kind: PacketDef, pName: AstNode(kind: Identifier, strVal: ident.val))
+
+  var currToken: Token
+
+  # Parse the protocol the packet was introduced in and the corrosponding ID
+  while not s.atTkEnd:
+    result.protoIdPairs.add s.parseProtoIDPair()
+
+    currToken = s.eat()
+
+    case currToken.typ
+      of CloseParen:
+        break
+
+      of Arrow:
+        continue
+
+      else:
+        s.report "Expected a closed parenthesis or an arrow!", UnexpectedToken, currToken
+
+  # Parse the packet body
+  currToken = s.eat()
+  if currToken.typ != Arrow:
+    s.report "Expected an arrow!", UnexpectedToken, currToken
+
+  currToken = s.eat()
+  if currToken.typ != Ident:
+    s.report "Expected an identifier!", UnexpectedToken, currToken
+
+  if currToken.val.toLower().capitalizeAscii notin ["Client", "Server"]:
+    s.report "Expected 'Client' or 'Server'!", InvalidPacketDirection, currToken
+
+  result.direction = AstNode(kind: Identifier, strVal: currToken.val.toLower().capitalizeAscii)
+
+  currToken = s.eat()
+  if currToken.typ != Colon:
+    s.report "Expected a colon!", UnexpectedToken, currToken
+
+  # TODO: Rest of body parsing
 
 proc parse*(tokens: seq[Token], fileName: string = "<string>",
     throwOnError: bool = true): State =
@@ -172,11 +204,15 @@ proc parse*(tokens: seq[Token], fileName: string = "<string>",
         result.nodes.add result.parseEnum(tkOne)
 
       of OpenParen:
-        discard
+        result.nodes.add result.parsePacket(tkOne)
 
       else:
         result.report "Expected an arrow or an open parenthesis!", UnexpectedToken, tkTwo
 
 
     # Unimplemented codepath
-    result.report "Unimplemented behaviour from this point on.", UnexpectedToken, result.eat()
+    return
+    #result.report "Unimplemented behaviour from this point on.", UnexpectedToken, result.eat()
+
+
+export types
