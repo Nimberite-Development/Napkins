@@ -15,7 +15,8 @@ type
     # Define the possible token types,including 'Error' which is only present to
     # ensure that all tokens have a type explicitly set.
     Error, Ident, Num, Null, OpenParen, CloseParen, OpenBrack, CloseBrack,
-    OpenBrace, CloseBrace, Comma, Arrow, Colon, Indent, Dedent, Placeholder
+    OpenBrace, CloseBrace, Comma, Arrow, Colon, Indent, Dedent, Placeholder,
+    EndOfFile
 
   Token* = object
     # Define the token object
@@ -113,8 +114,8 @@ proc lexIndent(l: var Lexer) =
   while not l.atEnd and l.curChar == ' ':
     lexeme &= l.curChar
     l.next()
-  
-  if l.curChar == '\n': return
+
+  if l.atEnd or l.curChar == '\n': return
 
   if l.indentStack.len == 0:
     if lexeme.len != 0:
@@ -244,5 +245,7 @@ proc lex*(l: var Lexer): seq[Token] =
       continue
 
   for i in 0..<l.indentStack.len: l.tokens.add l.initToken(Dedent, "", l.line, l.column)
+
+  l.tokens.add l.initToken(EndOfFile, "", l.line, l.column)
 
   return l.tokens

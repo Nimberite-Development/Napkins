@@ -3,6 +3,9 @@ import std/strutils
 import ../lexer
 
 type
+  FieldParseResult* = enum
+    HandledConditionalField, AddNewField, FoundDedent
+
   ParserFailureReason* = enum
     UnexpectedToken, GenericWithMissingParameters, ExpectedEnumDefinition, MalformedEnumDefinition,
     InvalidPacketDirection, PlaceholderTokenFound
@@ -26,6 +29,16 @@ type
     EnumFieldDef,
     PacketFieldDef
 
+  ConditionKind* = enum
+    EnumComparison
+
+  Condition* = object
+    # Used for packet decode and encode 
+    case kind*: ConditionKind
+      of EnumComparison:
+        targetField*: AstNode
+        enumValue*: AstNode
+
   AstNode* {.acyclic.} = ref object
     # TODO: Add line info data - Use `std/macros`' `LineInfo` or our own type?
     case kind*: AstKind
@@ -46,6 +59,7 @@ type
         pfName*: AstNode                # Identifier
         pfProto*: AstNode               # NumLiteral
         pfType*: AstNode                # Identifier
+        pfConditions*: seq[Condition]   # seq[Condition] - Used for conditional fields
         pfOrder*: int                   # ? Order is defined on the parser level
 
       of EnumFieldDef:
@@ -81,6 +95,15 @@ type
     name*: string
     params*: seq[set[AstKind]]
 
+proc `$`*(n: AstNode, depth: int = 0): string
+
+proc `$`*(c: Condition, depth: int = 0): string =
+  case c.kind
+    of EnumComparison:
+      result = repeat(" ", depth * 2) & "EnumComparison ->\n"
+      result.add repeat(" ", (depth + 1) * 2) & "TargetField ->\n" & `$`(c.targetField, depth + 2) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "EnumValue: " & `$`(c.enumValue, depth + 2)
+
 proc `$`*(n: AstNode, depth: int = 0): string =
   case n.kind
     of NullLiteral:
@@ -107,6 +130,14 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", (depth + 1) * 2) & "Type: " & `$`(n.pfType, depth + 1) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Order: "
       result.addQuoted n.pfOrder
+      result.add '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Conditions:\n"
+      for i in n.pfConditions: result.add `$`(i, depth + 2) & "\n\n"
+      if n.pfConditions.len > 0:
+        result.setLen(result.len - 2)
+      else:
+        result.setLen(result.len - 1)
+        result.add " N/A"
 
     of EnumFieldDef:
       result = repeat(" ", depth * 2) & "EnumFieldDef ->\n"
@@ -128,6 +159,7 @@ proc `$`*(n: AstNode, depth: int = 0): string =
     of PacketDef:
       result = repeat(" ", depth * 2) & "PacketDef ->\n"
       result.add repeat(" ", (depth + 1) * 2) & "Name: " & `$`(n.pName, depth + 1)
+      result.add '\n'
       for i in n.protoIdPairs:
         result.add repeat(" ", (depth + 1) * 2) & "Proto ID Pair: " & `$`(i.proto, depth + 1) & " -> " &
           `$`(i.packet, depth + 1) & ", "

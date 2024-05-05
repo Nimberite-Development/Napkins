@@ -1,26 +1,32 @@
-#Colour -> Enum[VInt32]:
-#  Pink, Blue, Red, Green, Yellow, {5} Purple, White
+Colour -> Enum[VInt32]:
+  Pink, Blue, Red, Green, Yellow, {5} Purple, White
+
+Divisions -> Enum[VInt32]:
+  Zero, Six, Ten, Twelve, Twenty
+
+BossBarAction -> Enum[VInt32]:
+  Add, Remove, UpdateHealth, UpdateTitle, UpdateTitle
 
 BossBar(1, 0x0A) -> Client:
   uuid: UUID
-  action: Enum[VInt] ->
-    {0} Add:
+  action: BossBarAction ->
+    Add:
       title: TextComponent
       health: Float
       colour: Colour
-      division: None # Similarly defined like the 'Colour' definition
+      division: Divisions
 
-    {1} Remove: None
+    Remove: Null
 
-    {2} UpdateHealth:
+    UpdateHealth:
       health: Float
 
-    {3} UpdateTitle:
+    UpdateTitle:
       title: TextComponent
 
-    {4} UpdateStyle:
+    UpdateStyle:
       colour: Colour
-      dividers: None
+      dividers: Null # Not sure what this is supposed to be
 
-    {5} UpdateFlags:
+    UpdateFlags:
       flags: UByte
