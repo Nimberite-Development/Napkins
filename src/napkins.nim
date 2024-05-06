@@ -6,7 +6,7 @@ import ./napkinspkg/[
 var lxr = initLexer(readFile("test.nmp"), "test.nmp", false)
 let tokens = lxr.lex()
 
-echo tokens
+#echo tokens
 
 var ast = parse(tokens, "test.nmp", true).nodes
 

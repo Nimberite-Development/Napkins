@@ -1,32 +1,49 @@
-Colour -> Enum[VInt32]:
-  Pink, Blue, Red, Green, Yellow, {5} Purple, White
+PlayerInfoUpdateActions -> Enum[SInt8]:
+  {0x01} AddPlayer, {0x02} InitializeChat, {0x04} UpdateGameMode, {0x08} UpdateListed,
+  {0x10} UpdateLatency, {0x20} UpdateDisplayName
 
-Divisions -> Enum[VInt32]:
-  Zero, Six, Ten, Twelve, Twenty
+Property -> Struct:
+  name: String[32767]
+  value: String[32767]
+  isSigned: Bool
+  @ isSigned:
+    signature: String[32767]
 
-BossBarAction -> Enum[VInt32]:
-  Add, Remove, UpdateHealth, UpdateTitle, UpdateTitle
+PlayerAction -> Struct[actions: SInt8]:
+  @ actions & AddPlayer:
+    name: String(16)
+    propertyCount: VInt32
+    properties: Array[propertyCount, Property]
 
-BossBar(1, 0x0A) -> Client:
+  @ actions & InitializeChat:
+    hasSignatureData: Bool
+    @ hasSignatureData:
+      chatSessionId: UUID
+      publicKeyExpiryTime: SInt64
+      encodedPublicKeySize: ConstrainU[VInt32, 512]
+      encodedPublicKey: Array[encodedPublicKeySize, UInt8]
+      publicKeySignatureSize: ConstrainU[VInt32, 4096]
+      publicKeySignature: Array[publicKeySignatureSize, UInt8]
+
+  @ actions & UpdateGameMode:
+    gameMode: VInt32
+
+  @ actions & UpdateListed:
+    listed: Bool
+
+  @ actions & UpdateLatency:
+    ping: VInt32
+
+  @ actions & UpdateDisplayName:
+    hasDisplayName: Bool
+    @ hasDisplayName:
+      displayName: NBTTextComponent
+
+PlayerInfo -> Struct[actions: SIn8]:
   uuid: UUID
-  action: BossBarAction ->
-    Add:
-      title: TextComponent
-      health: Float
-      colour: Colour
-      division: Divisions
+  action: PlayerAction[actions]
 
-    Remove: Null
-
-    UpdateHealth:
-      health: Float
-
-    UpdateTitle:
-      title: TextComponent
-
-    UpdateStyle:
-      colour: Colour
-      dividers: Null # Not sure what this is supposed to be
-
-    UpdateFlags:
-      flags: UByte
+PlayerInfoUpdate(0, 0x3C) -> Client:
+  actions: SInt8
+  playerCount: VInt32
+  playerActions: Array[playerCount, PlayerInfo[actions]]

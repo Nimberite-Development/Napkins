@@ -4,11 +4,11 @@ import ../lexer
 
 type
   FieldParseResult* = enum
-    HandledConditionalField, AddNewField, FoundDedent
+    HandledConditionalField, HandledIndex, AddNewField, FoundDedent
 
   ParserFailureReason* = enum
     UnexpectedToken, GenericWithMissingParameters, ExpectedEnumDefinition, MalformedEnumDefinition,
-    InvalidPacketDirection, PlaceholderTokenFound
+    IndexOnNonIndexableValue, InvalidPacketDirection, PlaceholderTokenFound
 
   NapkinsParserError* = object of CatchableError
     fileName*: string
@@ -24,13 +24,16 @@ type
     NumLiteral,
     Identifier,
     Index,
+    StructDef,
     PacketDef,
     EnumTypeDef,
     EnumFieldDef,
-    PacketFieldDef
+    PacketFieldDef,
+    StructFieldDef,
+    FunctionCall # Only used for conditional fields!
 
   ConditionKind* = enum
-    EnumComparison
+    EnumComparison, Expr
 
   Condition* = object
     # Used for packet decode and encode 
@@ -38,6 +41,9 @@ type
       of EnumComparison:
         targetField*: AstNode
         enumValue*: AstNode
+
+      of Expr:
+        exp*: AstNode # FunctionCall
 
   AstNode* {.acyclic.} = ref object
     # TODO: Add line info data - Use `std/macros`' `LineInfo` or our own type?
@@ -52,8 +58,8 @@ type
         strVal*: string
 
       of Index:
-        indexee*: AstNode               # Identifier
-        indexer*: AstNode               # Identifier
+        itarget*: AstNode             # Identifier
+        iargs*: seq[AstNode]          # seq[Identifier | NumLiteral | Index]
 
       of PacketFieldDef:
         pfName*: AstNode                # Identifier
@@ -68,6 +74,19 @@ type
         efValue*: AstNode               # NumLiteral
         efOrder*: int                   # ? Order is defined on the parser level
 
+      of StructFieldDef:
+        sfName*: AstNode                # Identifier
+        sfProto*: AstNode               # NumLiteral
+        sfType*: AstNode                # Identifier
+        sfConditions*: seq[Condition]   # seq[Condition] - Used for conditional fields
+        sfOrder*: int                   # ? Order is defined on the parser level
+
+      of StructDef:
+        sName*: AstNode                 # Identifier
+        sArgs*: seq[(AstNode, AstNode)] # seq[Identifier | NumLiteral | Index] x2 - Name-Type pair
+        sFieldDefs*: seq[AstNode]       # seq[StructFieldDef]
+        sResolved*: bool                # ? Struct value resolution is done during a later parsing stage
+
       of EnumTypeDef:
         eName*: AstNode                 # Identifier
         eType*: AstNode                 # Identifier
@@ -80,6 +99,10 @@ type
         direction*: AstNode             # Identifier, to 'Client' or 'Server'
         pFieldDefs*: seq[AstNode]       # seq[PacketFieldDef]
         pResolved*: bool                # ? Packet value resolution is done during a later parsing stage
+
+      of FunctionCall:
+        fcName*: AstNode      # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
+        fcArgs*: seq[AstNode] # seq[Identifier | NumLiteral] - Function arguments
 
     when defined(napkinNodeIds):
       id: int
@@ -101,8 +124,12 @@ proc `$`*(c: Condition, depth: int = 0): string =
   case c.kind
     of EnumComparison:
       result = repeat(" ", depth * 2) & "EnumComparison ->\n"
-      result.add repeat(" ", (depth + 1) * 2) & "TargetField ->\n" & `$`(c.targetField, depth + 2) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "TargetField: " & `$`(c.targetField, depth + 2) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "EnumValue: " & `$`(c.enumValue, depth + 2)
+
+    of Expr:
+      result = repeat(" ", depth * 2) & "Expr ->\n"
+      result.add repeat(" ", (depth + 1) * 2) & `$`(c.exp, depth + 2)
 
 proc `$`*(n: AstNode, depth: int = 0): string =
   case n.kind
@@ -119,9 +146,11 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.addQuoted n.strVal
 
     of Index:
-      result = repeat(" ", depth * 2) & "Index ->\n"
-      result.add repeat(" ", depth * 2) & "Indexee: " & `$`(n.indexee, depth + 1) & '\n'
-      result.add repeat(" ", depth * 2) & "Indexer: " & `$`(n.indexer, depth + 1)
+      result = "Index ->\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Target: " & `$`(n.itarget, (depth + 1) + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Args ->\n"
+      for i in n.iargs: result.add repeat(" ", (depth + 2) * 2) & `$`(i, depth + 2) & '\n'
+      result.setLen(result.len - 1)
 
     of PacketFieldDef:
       result = repeat(" ", depth * 2) & "PacketFieldDef ->\n"
@@ -131,7 +160,7 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", (depth + 1) * 2) & "Order: "
       result.addQuoted n.pfOrder
       result.add '\n'
-      result.add repeat(" ", (depth + 1) * 2) & "Conditions:\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Conditions ->\n"
       for i in n.pfConditions: result.add `$`(i, depth + 2) & "\n\n"
       if n.pfConditions.len > 0:
         result.setLen(result.len - 2)
@@ -146,6 +175,36 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", (depth + 1) * 2) & "Value: " & `$`(n.efValue, depth + 1) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Order: "
       result.addQuoted n.efOrder
+
+    of StructFieldDef:
+      result = repeat(" ", depth * 2) & "StructFieldDef ->\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Name: " & `$`(n.sfName, depth + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Proto: " & `$`(n.sfProto, depth + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Type: " & `$`(n.sfType, depth + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Order: "
+      result.addQuoted n.sfOrder
+      result.add '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Conditions:\n"
+      for i in n.sfConditions: result.add `$`(i, depth + 2) & "\n\n"
+      if n.sfConditions.len > 0:
+        result.setLen(result.len - 2)
+      else:
+        result.setLen(result.len - 1)
+        result.add " N/A"
+
+    of StructDef:
+      result = repeat(" ", depth * 2) & "StructDef ->\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Name: " & `$`(n.sName, depth + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.sResolved).capitalizeAscii & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Struct Arg-Type Pairs:\n"
+      for i in n.sArgs:
+        result.add repeat(" ", (depth + 2) * 2) & `$`(i[0], depth + 2) & " -> " & `$`(i[1], depth + 2) & '\n'
+      if n.sArgs.len == 0:
+        result.setLen result.len - 1
+        result.add " N/A\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Struct Fields:\n"
+      for i in n.sFieldDefs: result.add `$`(i, depth + 2) & "\n\n"
+      result.setLen result.len - 2
 
     of EnumTypeDef:
       result = repeat(" ", depth * 2) & "EnumTypeDef ->\n"
@@ -163,16 +222,21 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       for i in n.protoIdPairs:
         result.add repeat(" ", (depth + 1) * 2) & "Proto ID Pair: " & `$`(i.proto, depth + 1) & " -> " &
           `$`(i.packet, depth + 1) & ", "
-
       result.setLen result.len - 2
       result.add '\n'
-
       result.add repeat(" ", (depth + 1) * 2) & "Direction: " & `$`(n.direction, depth + 1) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.pResolved).capitalizeAscii & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Packet Fields:\n"
       for i in n.pFieldDefs: result.add `$`(i, depth + 2) & "\n\n"
 
       result.setLen result.len - 2
+
+    of FunctionCall:
+      result = "FunctionCall ->\n"
+      result.add repeat(" ", depth * 2) & "Name: " & `$`(n.fcName, depth + 1) & '\n'
+      result.add repeat(" ", depth * 2) & "Arguments ->\n"
+      for i in n.fcArgs: result.add repeat(" ", (depth + 1) * 2) & `$`(i, depth + 2) & "\n"
+      result.setLen result.len - 1
 
 func builtinType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): BuiltinType =
   BuiltinType(name: name, params: @params)
@@ -199,12 +263,16 @@ const NapkinTypes* = [
   builtinType("Identifier"), # Identifier
   builtinType("UUID"),       # UUID
   # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
-  builtinType("Optional", {Identifier, Identifier}),
+  builtinType("Optional", {Identifier}, {Identifier}),
   builtinType("Position"),   # Position
   # Enum[T] - T refers to the type
   builtinType("Enum", {Identifier}),
   # NBT[Size] - Size refers to the length using another field for definition
-  builtinType("NBT", {Identifier})
+  builtinType("NBT", {Identifier}),
+  # Constrain[T, U, V] - T refers to the type, U refers to the maximum value, V refers to the minimum value
+  builtinType("ConstrainUV", {Identifier}, {NumLiteral}, {NumLiteral}),
+  # Constrain[T, U] - T refers to the type, U refers to the maximum value
+  builtinType("ConstrainU", {Identifier}, {NumLiteral})
 ]
 
 proc contains*(nt: openArray[BuiltinType], name: string): bool =

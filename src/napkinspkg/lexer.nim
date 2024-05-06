@@ -16,7 +16,7 @@ type
     # ensure that all tokens have a type explicitly set.
     Error, Ident, Num, Null, OpenParen, CloseParen, OpenBrack, CloseBrack,
     OpenBrace, CloseBrace, Comma, Arrow, Colon, Indent, Dedent, Placeholder,
-    EndOfFile
+    At, ShiftLeft, ShiftRight, BitAnd, BitOr, BitNot, EndOfFile
 
   Token* = object
     # Define the token object
@@ -233,10 +233,27 @@ proc lex*(l: var Lexer): seq[Token] =
         of '}': CloseBrace
         of ':': Colon
         of ',': Comma
+        of '@': At
+        of '!': BitNot
+        of '&': BitAnd
+        of '|': BitOr
         of ' ':
           l.next()
           continue
         else:
+          let (line, column) = (l.line, l.column)
+          if l.curChar == '<':
+            l.next()
+            if l.curChar == '<':
+              l.tokens.add l.initToken(ShiftLeft, "<<", line, column)
+              continue
+          
+          elif l.curChar == '>':
+            l.next()
+            if l.curChar == '>':
+              l.tokens.add l.initToken(ShiftRight, ">>", line, column)
+              continue
+
           l.report &"Unexpected character `{l.curChar}`!", InvalidToken
           return
 
