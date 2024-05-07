@@ -1,2 +1,4 @@
 /napkins
 config.nims
+/tests/*
+!/tests/*.nim(s)?

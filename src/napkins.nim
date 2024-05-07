@@ -1,13 +1,13 @@
-import ./napkinspkg/[
-  lexer,
-  parser
-]
+import ./napkinspkg/lexer
+
+import ./napkinspkg/parser/[semantic, literal, types]
 
 var lxr = initLexer(readFile("test.nmp"), "test.nmp", true)
 let tokens = lxr.lex()
 
 #echo tokens
 
-var ast = parse(tokens, "test.nmp", true).nodes
+let ast = parse(tokens, "test.nmp", true).nodes
+var sp = initSemanticPass(ast)
 
-echo ast
+echo sp.process()

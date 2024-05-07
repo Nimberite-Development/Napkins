@@ -4,8 +4,8 @@ import std/[
   tables
 ]
 
-import ./lexer
-import ./parser/types
+import ../lexer
+import ./types
 
 const PrecedenceTable = {
   BitNot: 1,

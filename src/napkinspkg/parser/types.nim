@@ -125,7 +125,7 @@ type
     when defined(napkinNodeIds):
       nodeId*: int
 
-  BuiltinType* = object
+  RegisteredType* = object
     name*: string
     params*: seq[set[AstKind]]
 
@@ -211,13 +211,13 @@ proc `$`*(n: AstNode, depth: int = 0): string =
     of StructDef:
       result = repeat(" ", depth * 2) & "StructDef ->\n"
       result.add repeat(" ", (depth + 1) * 2) & "Name: " & `$`(n.sName, depth + 1) & '\n'
-      result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.sResolved).capitalizeAscii & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Struct Arg-Type Pairs:\n"
       for i in n.sArgs:
         result.add repeat(" ", (depth + 2) * 2) & `$`(i[0], depth + 2) & " -> " & `$`(i[1], depth + 2) & '\n'
       if n.sArgs.len == 0:
         result.setLen result.len - 1
         result.add " N/A\n"
+      result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.sResolved).capitalizeAscii & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Struct Fields:\n"
       for i in n.sFieldDefs: result.add `$`(i, depth + 2) & "\n\n"
       result.setLen result.len - 2
@@ -226,8 +226,8 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result = repeat(" ", depth * 2) & "EnumTypeDef ->\n"
       result.add repeat(" ", (depth + 1) * 2) & "Name: " & `$`(n.eName, depth + 1) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Type: " & `$`(n.eType, depth + 1) & '\n'
-      result.add repeat(" ", (depth + 1) * 2) & "Enum Fields:\n"
       result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.eResolved).capitalizeAscii & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Enum Fields:\n"
       for i in n.eFieldDefs: result.add `$`(i, depth + 2) & "\n\n"
       result.setLen result.len - 2
 
@@ -260,44 +260,47 @@ proc `$`*(n: seq[AstNode]): string =
 
   result.setLen result.len - 2
 
-func builtinType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): BuiltinType =
-  BuiltinType(name: name, params: @params)
+func registerType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): RegisteredType =
+  RegisteredType(name: name, params: @params)
 
-template isGeneric*(t: BuiltinType): bool = bool(t.params.len)
+template isGeneric*(t: RegisteredType): bool = bool(t.params.len)
 
 # TODO: Text Component, JSON Text Component, Entity Metadata, Slot
 const NapkinTypes* = [
   # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
-  builtinType("Array", {Identifier, NumLiteral}, {Identifier}),
-  builtinType("VInt32"),     # VarInt
-  builtinType("VInt64"),     # VarLong
-  builtinType("UInt8"),      # Unsigned Byte
-  builtinType("UInt16"),     # Unsigned Short
-  builtinType("SInt8"),      # Signed Byte
-  builtinType("SInt16"),     # Signed Short
-  builtinType("SInt32"),     # Signed Int
-  builtinType("SInt64"),     # Signed Long
-  builtinType("Float32"),    # Float
-  builtinType("Float64"),    # Double
-  builtinType("Bool"),       # Boolean
+  registerType("Array", {Identifier, NumLiteral}, {Identifier, Index}),
+  registerType("VInt32"),     # VarInt
+  registerType("VInt64"),     # VarLong
+  registerType("UInt8"),      # Unsigned Byte
+  registerType("UInt16"),     # Unsigned Short
+  registerType("SInt8"),      # Signed Byte
+  registerType("SInt16"),     # Signed Short
+  registerType("SInt32"),     # Signed Int
+  registerType("SInt64"),     # Signed Long
+  registerType("Float32"),    # Float
+  registerType("Float64"),    # Double
+  registerType("Bool"),       # Boolean
   # String[MSize] - MSize meaning the maximum length as a NumLiteral
-  builtinType("String", {NumLiteral}),
-  builtinType("Identifier"), # Identifier
-  builtinType("UUID"),       # UUID
+  registerType("String", {NumLiteral}),
+  registerType("Identifier"), # Identifier
+  registerType("UUID"),       # UUID
   # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
-  builtinType("Optional", {Identifier}, {Identifier}),
-  builtinType("Position"),   # Position
+  registerType("Optional", {Identifier}, {Identifier}),
+  registerType("Position"),   # Position
   # Enum[T] - T refers to the type
-  builtinType("Enum", {Identifier}),
+  registerType("Enum", {Identifier}),
   # NBT[Size] - Size refers to the length using another field for definition
-  builtinType("NBT", {Identifier}),
+  registerType("NBT", {Identifier}),
   # Constrain[T, U, V] - T refers to the type, U refers to the maximum value, V refers to the minimum value
-  builtinType("ConstrainUV", {Identifier}, {NumLiteral}, {NumLiteral}),
+  registerType("ConstrainUV", {Identifier}, {NumLiteral}, {NumLiteral}),
   # Constrain[T, U] - T refers to the type, U refers to the maximum value
-  builtinType("ConstrainU", {Identifier}, {NumLiteral})
+  registerType("ConstrainU", {Identifier}, {NumLiteral})
 ]
 
-proc contains*(nt: openArray[BuiltinType], name: string): bool =
+proc contains*(nt: openArray[RegisteredType], name: string): bool =
   for t in nt: (if t.name == name: return true)
+
+proc `[]`*(nt: openArray[RegisteredType], name: string): RegisteredType =
+  for t in nt: (if t.name == name: return t)
 
 proc nodes*(state: State): seq[AstNode] = state.nodes

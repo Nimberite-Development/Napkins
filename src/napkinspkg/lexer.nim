@@ -1,7 +1,5 @@
 import std/[strutils, strformat]
 
-{.define: napkinTokenIds.}
-
 type
   LexerFailureReason* = enum
     DedentationMismatch, InvalidNumber, InvalidToken
