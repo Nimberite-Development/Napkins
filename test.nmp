@@ -10,12 +10,12 @@ Property -> Struct:
     signature: String[32767]
 
 PlayerAction -> Struct[actions: SInt8]:
-  @ actions & AddPlayer:
+  @ actions & PlayerInfoUpdateActions.AddPlayer:
     name: String(16)
     propertyCount: VInt32
     properties: Array[propertyCount, Property]
 
-  @ actions & InitializeChat:
+  @ actions & PlayerInfoUpdateActions.InitializeChat:
     hasSignatureData: Bool
     @ hasSignatureData:
       chatSessionId: UUID
@@ -25,21 +25,21 @@ PlayerAction -> Struct[actions: SInt8]:
       publicKeySignatureSize: ConstrainU[VInt32, 4096]
       publicKeySignature: Array[publicKeySignatureSize, UInt8]
 
-  @ actions & UpdateGameMode:
+  @ actions & PlayerInfoUpdateActions.UpdateGameMode:
     gameMode: VInt32
 
-  @ actions & UpdateListed:
+  @ actions & PlayerInfoUpdateActions.UpdateListed:
     listed: Bool
 
-  @ actions & UpdateLatency:
+  @ actions & PlayerInfoUpdateActions.UpdateLatency:
     ping: VInt32
 
-  @ actions & UpdateDisplayName:
+  @ actions & PlayerInfoUpdateActions.UpdateDisplayName:
     hasDisplayName: Bool
     @ hasDisplayName:
       displayName: NBTTextComponent
 
-PlayerInfo -> Struct[actions: SIn8]:
+PlayerInfo -> Struct[actions: SInt8]:
   uuid: UUID
   action: PlayerAction[actions]
 

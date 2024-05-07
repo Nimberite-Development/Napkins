@@ -24,6 +24,7 @@ type
     NumLiteral,
     Identifier,
     Index,
+    DotExpr,
     StructDef,
     PacketDef,
     EnumTypeDef,
@@ -58,8 +59,12 @@ type
         strVal*: string
 
       of Index:
-        itarget*: AstNode             # Identifier
-        iargs*: seq[AstNode]          # seq[Identifier | NumLiteral | Index]
+        itarget*: AstNode               # Identifier
+        iargs*: seq[AstNode]            # seq[Identifier | NumLiteral | Index]
+
+      of DotExpr:
+        dleft*: AstNode                 # Identifier
+        dright*: AstNode                # Identifier
 
       of PacketFieldDef:
         pfName*: AstNode                # Identifier
@@ -101,8 +106,8 @@ type
         pResolved*: bool                # ? Packet value resolution is done during a later parsing stage
 
       of FunctionCall:
-        fcName*: AstNode      # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
-        fcArgs*: seq[AstNode] # seq[Identifier | NumLiteral] - Function arguments
+        fcName*: AstNode                # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
+        fcArgs*: seq[AstNode]           # seq[Identifier | NumLiteral] - Function arguments
 
     when defined(napkinNodeIds):
       id: int
@@ -151,6 +156,11 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", (depth + 1) * 2) & "Args ->\n"
       for i in n.iargs: result.add repeat(" ", (depth + 2) * 2) & `$`(i, depth + 2) & '\n'
       result.setLen(result.len - 1)
+
+    of DotExpr:
+      result = "DotExpr ->\n"
+      result.add repeat(" ", (depth) * 2) & "Left: " & `$`(n.dleft, (depth + 1) + 1) & '\n'
+      result.add repeat(" ", (depth) * 2) & "Right: " & `$`(n.dright, (depth + 1) + 1)
 
     of PacketFieldDef:
       result = repeat(" ", depth * 2) & "PacketFieldDef ->\n"
@@ -237,6 +247,12 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", depth * 2) & "Arguments ->\n"
       for i in n.fcArgs: result.add repeat(" ", (depth + 1) * 2) & `$`(i, depth + 2) & "\n"
       result.setLen result.len - 1
+
+proc `$`*(n: seq[AstNode]): string =
+  for i in n:
+    result &= $i & "\n\n"
+
+  result.setLen result.len - 2
 
 func builtinType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstKind]]()): BuiltinType =
   BuiltinType(name: name, params: @params)

@@ -274,6 +274,9 @@ proc parseCondition(s: var State): Condition =
       of Num:
         outputStack.add currToken
 
+      of Dot:
+        outputStack.add currToken
+
       of BitNot:
         opStack.add currToken
 
@@ -316,23 +319,52 @@ proc parseCondition(s: var State): Condition =
 
   var stack = newSeq[AstNode]()
 
+  var toggle = 0
+
   for i in outputStack:
     case i.typ
       of Ident:
         stack.add AstNode(kind: Identifier, strVal: i.val)
 
+        if toggle == 2:
+          stack.add AstNode(kind: DotExpr, dright: stack.pop, dleft: stack.pop)
+
       of Num:
         stack.add AstNode(kind: NumLiteral, numVal: i.val.parseInt)
 
+        if toggle == 2:
+          s.report "Expected an identifier to complete the dot expression!", UnexpectedToken, i
+
+      of Dot:
+        if stack.len < 2:
+          s.report "Expected an identifier or a number!", UnexpectedToken, i
+
+        if toggle == 2:
+          stack.add AstNode(kind: DotExpr, dright: stack.pop, dleft: stack.pop)
+
+        toggle = 1
+
       of BitNot:
         stack.add AstNode(kind: FunctionCall, fcName: AstNode(kind: Identifier, strVal: i.val), fcArgs: @[stack.pop])
+
+        if toggle == 2:
+          s.report "Expected an identifier to complete the dot expression!", UnexpectedToken, i
 
       of {BitAnd, BitOr, ShiftLeft, ShiftRight}:
         stack.add AstNode(kind: FunctionCall, fcName: AstNode(kind: Identifier, strVal: i.val),
           fcArgs: @[stack.pop, stack.pop])
 
+        if toggle == 2:
+          s.report "Expected an identifier to complete the dot expression!", UnexpectedToken, i
+
       else:
         s.report "Unexpected token!", UnexpectedToken, i
+
+    if toggle == 2:
+      toggle = 0
+
+    elif toggle == 1:
+      toggle = 2
 
     if stack.len > 1:
       swap stack[^2], stack[^1]

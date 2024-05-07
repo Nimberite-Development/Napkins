@@ -16,7 +16,7 @@ type
     # ensure that all tokens have a type explicitly set.
     Error, Ident, Num, Null, OpenParen, CloseParen, OpenBrack, CloseBrack,
     OpenBrace, CloseBrace, Comma, Arrow, Colon, Indent, Dedent, Placeholder,
-    At, ShiftLeft, ShiftRight, BitAnd, BitOr, BitNot, EndOfFile
+    Dot, At, ShiftLeft, ShiftRight, BitAnd, BitOr, BitNot, EndOfFile
 
   Token* = object
     # Define the token object
@@ -210,9 +210,13 @@ proc lex*(l: var Lexer): seq[Token] =
         inc counter
         l.next()
 
-      if counter != 3: l.report &"Unexpected character `{l.curChar}`!", InvalidToken
-
-      l.tokens.add l.initToken(Placeholder, "...", l.line, l.column)
+      case counter
+        of 1:
+          l.tokens.add l.initToken(Dot, ".", l.line, l.column)
+        of 3:
+          l.tokens.add l.initToken(Placeholder, "...", l.line, l.column)
+        else:
+          l.report &"Unexpected character `{l.curChar}`!", InvalidToken
       continue
 
     elif l.curChar.isAlphaAscii:
