@@ -15,6 +15,9 @@ type
     reason*: ParserFailureReason
     token*: Token
 
+  PacketDirection* = enum
+    Client, Server # Client == *To* Client, Server == *To* Server
+
   # proto: NumLiteral
   # packet: Identifier
   ProtoIDPair* = tuple[proto: AstNode, packet: AstNode]
@@ -101,7 +104,7 @@ type
       of PacketDef:
         pName*: AstNode # Identifier
         protoIdPairs*: seq[ProtoIDPair]
-        direction*: AstNode             # Identifier, to 'Client' or 'Server'
+        pDirection*: PacketDirection
         pFieldDefs*: seq[AstNode]       # seq[PacketFieldDef]
         pResolved*: bool                # ? Packet value resolution is done during a later parsing stage
 
@@ -110,7 +113,7 @@ type
         fcArgs*: seq[AstNode]           # seq[Identifier | NumLiteral] - Function arguments
 
     when defined(napkinNodeIds):
-      id: int
+      id*: int
 
   State* = object
     throwOnError*: bool ## Throws an error instead of quiting
@@ -118,6 +121,9 @@ type
     tkPos*, ndPos*: int
     tokens*: seq[Token]
     nodes*: seq[AstNode]
+
+    when defined(napkinNodeIds):
+      nodeId*: int
 
   BuiltinType* = object
     name*: string
@@ -234,7 +240,7 @@ proc `$`*(n: AstNode, depth: int = 0): string =
           `$`(i.packet, depth + 1) & ", "
       result.setLen result.len - 2
       result.add '\n'
-      result.add repeat(" ", (depth + 1) * 2) & "Direction: " & `$`(n.direction, depth + 1) & '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Direction: " & $n.pDirection & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Resolved: " & ($n.pResolved).capitalizeAscii & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Packet Fields:\n"
       for i in n.pFieldDefs: result.add `$`(i, depth + 2) & "\n\n"

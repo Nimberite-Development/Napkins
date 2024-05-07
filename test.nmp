@@ -10,6 +10,8 @@ Property -> Struct:
     signature: String[32767]
 
 PlayerAction -> Struct[actions: SInt8]:
+  actions: SInt8 # `actions` should be set to the value set in the constructor instead of parsed from a packet
+
   @ actions & PlayerInfoUpdateActions.AddPlayer:
     name: String(16)
     propertyCount: VInt32
