@@ -1,4 +1,8 @@
+import std/sugar
+
 import ./types
+
+# TODO: Error reporting function
 
 type
   SemanticPass* = object
@@ -12,14 +16,14 @@ proc processEnum(sp: var SemanticPass, n: AstNode): AstNode =
     name = n.eName.strVal
     typ = n.eType.strVal
 
-  if typ notin ["VInt32", "VInt64", "UInt8", "UInt16", "SInt8", "SInt16", "SInt32", "SInt64"]:
+  if typ notin OrdinalNapkinTypes:
     quit "Invalid enum type: " & typ
 
   sp.registeredTypes.add registerType(name)
 
   return n
 
-proc validateFieldType(sp: var SemanticPass, n: AstNode): bool =
+proc validateType(sp: var SemanticPass, n: AstNode, identsInScope: seq[string] = @[]): bool =
   case n.kind
     of Identifier:
       if n.strVal notin sp.registeredTypes:
@@ -51,24 +55,42 @@ proc validateFieldType(sp: var SemanticPass, n: AstNode): bool =
   return true
 
 proc processStruct(sp: var SemanticPass, n: AstNode): AstNode =
+  type
+    ProtoNameTypeTriple = tuple[proto: AstNode, name: AstNode, typ: AstNode]
+    ProtoNameTypAstTyp = tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]
+
+  template proto(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.proto
+  template name(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.name
+  template typAst(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.typ
+
+  template typName(i: ProtoNameTypeTriple): string =
+    (if i.typ.kind == Identifier: i.typ.strVal elif i.typ.kind == Index: i.typ.itarget.strVal else: quit("Invalid AST!"))
+
   result = n
-  let name = result.sName.strVal
+  let structName = result.sName.strVal
   var
     types = newSeq[set[AstKind]]()
-    constructorNames = newSeq[string]()
-    fieldNames = newSeq[string]()
+    constructors = newSeq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]()
+    fieldNames = newSeq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]()
 
   for i in result.sArgs:
     types.add {Identifier}
 
+    var dup: typeof(constructors)
 
+    for it in constructors:
+      if it.name.strVal == i.name.strVal:
+        dup.add it
 
-    if i[0].strVal in constructorNames:
-      quit "Duplicate constructor name: " & i[0].strVal
+    echo i
+    if not sp.validateType(i.typ):
+      quit "Invalid type: " & $i.typName
 
-    constructorNames.add i[0].strVal
+    constructors.add (i, sp.registeredTypes[i.typName])
 
-  sp.registeredTypes.add registerType(name, params=types)
+  #for 
+
+  sp.registeredTypes.add registerType(structName, params=types)
 
 proc process*(sp: var SemanticPass): seq[AstNode] =
   for n in sp.nodes:
@@ -81,10 +103,8 @@ proc process*(sp: var SemanticPass): seq[AstNode] =
 
       of PacketDef:
         echo "Unimplemented!"
-        quit()
+        break
 
       else:
         echo "Invalid node in this context"
         quit()
-
-    break

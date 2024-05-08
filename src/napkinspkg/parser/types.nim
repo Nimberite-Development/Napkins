@@ -10,6 +10,9 @@ type
     UnexpectedToken, GenericWithMissingParameters, ExpectedEnumDefinition, MalformedEnumDefinition,
     IndexOnNonIndexableValue, InvalidPacketDirection, PlaceholderTokenFound
 
+  NapkinsLineInfo* = object
+    line*, col*: int
+
   NapkinsParserError* = object of CatchableError
     fileName*: string
     reason*: ParserFailureReason
@@ -62,56 +65,57 @@ type
         strVal*: string
 
       of Index:
-        itarget*: AstNode               # Identifier
-        iargs*: seq[AstNode]            # seq[Identifier | NumLiteral | Index]
+        itarget*: AstNode                             # Identifier
+        iargs*: seq[AstNode]                          # seq[Identifier | NumLiteral | Index]
 
       of DotExpr:
-        dleft*: AstNode                 # Identifier
-        dright*: AstNode                # Identifier
+        dleft*: AstNode                               # Identifier
+        dright*: AstNode                              # Identifier
 
       of PacketFieldDef:
-        pfName*: AstNode                # Identifier
-        pfProto*: AstNode               # NumLiteral
-        pfType*: AstNode                # Identifier
-        pfConditions*: seq[Condition]   # seq[Condition] - Used for conditional fields
-        pfOrder*: int                   # ? Order is defined on the parser level
+        pfName*: AstNode                              # Identifier
+        pfProto*: AstNode                             # NumLiteral
+        pfType*: AstNode                              # Identifier
+        pfConditions*: seq[Condition]                 # seq[Condition] - Used for conditional fields
+        pfOrder*: int                                 # ? Order is defined on the parser level
 
       of EnumFieldDef:
-        efName*: AstNode                # Identifier
-        efProto*: AstNode               # NumLiteral
-        efValue*: AstNode               # NumLiteral
-        efOrder*: int                   # ? Order is defined on the parser level
+        efName*: AstNode                              # Identifier
+        efProto*: AstNode                             # NumLiteral
+        efValue*: AstNode                             # NumLiteral
+        efOrder*: int                                 # ? Order is defined on the parser level
 
       of StructFieldDef:
-        sfName*: AstNode                # Identifier
-        sfProto*: AstNode               # NumLiteral
-        sfType*: AstNode                # Identifier
-        sfConditions*: seq[Condition]   # seq[Condition] - Used for conditional fields
-        sfOrder*: int                   # ? Order is defined on the parser level
+        sfName*: AstNode                              # Identifier
+        sfProto*: AstNode                             # NumLiteral
+        sfType*: AstNode                              # Identifier
+        sfConditions*: seq[Condition]                 # seq[Condition] - Used for conditional fields
+        sfOrder*: int                                 # ? Order is defined on the parser level
 
       of StructDef:
-        sName*: AstNode                 # Identifier
-        sArgs*: seq[(AstNode, AstNode)] # seq[Identifier | NumLiteral | Index] x2 - Name-Type pair
-        sFieldDefs*: seq[AstNode]       # seq[StructFieldDef]
-        sResolved*: bool                # ? Struct value resolution is done during a later parsing stage
+        sName*: AstNode                               # Identifier
+        sArgs*: seq[tuple[proto, name, typ: AstNode]] # NumLiteral, (Identifier | NumLiteral | Index) * 2
+        sFieldDefs*: seq[AstNode]                     # seq[StructFieldDef]
+        sResolved*: bool                              # ? Struct value resolution is done during a later parsing stage
 
       of EnumTypeDef:
-        eName*: AstNode                 # Identifier
-        eType*: AstNode                 # Identifier
-        eFieldDefs*: seq[AstNode]       # seq[EnumFieldDef]
-        eResolved*: bool                # ? Enum value resolution is done during a later parsing stage
+        eName*: AstNode                               # Identifier
+        eType*: AstNode                               # Identifier
+        eFieldDefs*: seq[AstNode]                     # seq[EnumFieldDef]
+        eResolved*: bool                              # ? Enum value resolution is done during a later parsing stage
 
       of PacketDef:
         pName*: AstNode # Identifier
         protoIdPairs*: seq[ProtoIDPair]
         pDirection*: PacketDirection
-        pFieldDefs*: seq[AstNode]       # seq[PacketFieldDef]
-        pResolved*: bool                # ? Packet value resolution is done during a later parsing stage
+        pFieldDefs*: seq[AstNode]                     # seq[PacketFieldDef]
+        pResolved*: bool                              # ? Packet value resolution is done during a later parsing stage
 
       of FunctionCall:
-        fcName*: AstNode                # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
-        fcArgs*: seq[AstNode]           # seq[Identifier | NumLiteral] - Function arguments
+        fcName*: AstNode                              # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
+        fcArgs*: seq[AstNode]                         # seq[Identifier | NumLiteral] - Function arguments
 
+    lineInfo*: NapkinsLineInfo
     when defined(napkinNodeIds):
       id*: int
 
@@ -266,36 +270,39 @@ func registerType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstK
 template isGeneric*(t: RegisteredType): bool = bool(t.params.len)
 
 # TODO: Text Component, JSON Text Component, Entity Metadata, Slot
-const NapkinTypes* = [
-  # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
-  registerType("Array", {Identifier, NumLiteral}, {Identifier, Index}),
-  registerType("VInt32"),     # VarInt
-  registerType("VInt64"),     # VarLong
-  registerType("UInt8"),      # Unsigned Byte
-  registerType("UInt16"),     # Unsigned Short
-  registerType("SInt8"),      # Signed Byte
-  registerType("SInt16"),     # Signed Short
-  registerType("SInt32"),     # Signed Int
-  registerType("SInt64"),     # Signed Long
-  registerType("Float32"),    # Float
-  registerType("Float64"),    # Double
-  registerType("Bool"),       # Boolean
-  # String[MSize] - MSize meaning the maximum length as a NumLiteral
-  registerType("String", {NumLiteral}),
-  registerType("Identifier"), # Identifier
-  registerType("UUID"),       # UUID
-  # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
-  registerType("Optional", {Identifier}, {Identifier}),
-  registerType("Position"),   # Position
-  # Enum[T] - T refers to the type
-  registerType("Enum", {Identifier}),
-  # NBT[Size] - Size refers to the length using another field for definition
-  registerType("NBT", {Identifier}),
-  # Constrain[T, U, V] - T refers to the type, U refers to the maximum value, V refers to the minimum value
-  registerType("ConstrainUV", {Identifier}, {NumLiteral}, {NumLiteral}),
-  # Constrain[T, U] - T refers to the type, U refers to the maximum value
-  registerType("ConstrainU", {Identifier}, {NumLiteral})
-]
+const
+  NapkinTypes* = [
+    # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
+    registerType("Array", {Identifier, NumLiteral}, {Identifier, Index}),
+    registerType("VInt32"),     # VarInt
+    registerType("VInt64"),     # VarLong
+    registerType("UInt8"),      # Unsigned Byte
+    registerType("UInt16"),     # Unsigned Short
+    registerType("SInt8"),      # Signed Byte
+    registerType("SInt16"),     # Signed Short
+    registerType("SInt32"),     # Signed Int
+    registerType("SInt64"),     # Signed Long
+    registerType("Float32"),    # Float
+    registerType("Float64"),    # Double
+    registerType("Bool"),       # Boolean
+    # String[MSize] - MSize meaning the maximum length as a NumLiteral
+    registerType("String", {NumLiteral}),
+    registerType("Identifier"), # Identifier
+    registerType("UUID"),       # UUID
+    # Optional[Present, T] - Present refers to whether or not a field is present, T refers to the type
+    registerType("Optional", {Identifier}, {Identifier}),
+    registerType("Position"),   # Position
+    # Enum[T] - T refers to the type
+    registerType("Enum", {Identifier}),
+    # NBT[Size] - Size refers to the length using another field for definition
+    registerType("NBT", {Identifier}),
+    # Constrain[T, U, V] - T refers to the type, U refers to the maximum value, V refers to the minimum value
+    registerType("ConstrainUV", {Identifier}, {NumLiteral}, {NumLiteral}),
+    # Constrain[T, U] - T refers to the type, U refers to the maximum value
+    registerType("ConstrainU", {Identifier}, {NumLiteral})
+  ]
+
+  OrdinalNapkinTypes* = NapkinTypes[NapkinTypes.find(registerType("VInt32"))..NapkinTypes.find(registerType("SInt64"))]
 
 proc contains*(nt: openArray[RegisteredType], name: string): bool =
   for t in nt: (if t.name == name: return true)

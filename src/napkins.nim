@@ -10,4 +10,4 @@ let tokens = lxr.lex()
 let ast = parse(tokens, "test.nmp", true).nodes
 var sp = initSemanticPass(ast)
 
-echo sp.process()
+echo '\n', sp.process()[0..<3]

@@ -1,6 +1,7 @@
 import std/[
   strformat,
   strutils,
+  options,
   tables
 ]
 
@@ -16,20 +17,36 @@ const PrecedenceTable = {
 }.toTable
 template isLeftPrecedence(op: TkType): bool = op != BitNot
 
-proc initAstNode(s: var State, kind: AstKind): AstNode =
-  result = AstNode(kind: kind)
+proc initLineInfo(tk: Option[Token] = none(Token)): NapkinsLineInfo =
+  if tk.isSome:
+    NapkinsLineInfo(line: tk.unsafeGet.startLine, col: tk.unsafeGet.startColumn)
+  else:
+    NapkinsLineInfo(line: -1, col: -1)
+proc initLineInfo(tk: Token): NapkinsLineInfo = initLineInfo(some(tk))
+
+proc initAstNode(s: var State, kind: AstKind, token: Option[Token] = none(Token)): AstNode =
+  result = AstNode(kind: kind, lineInfo: initLineInfo(token))
 
   when defined(napkinNodeIds):
     result.id = s.nodeId
     inc s.nodeId
 
-proc ident(s: var State, val: string): AstNode =
-  result = s.initAstNode(Identifier)
+proc initAstNode(s: var State, kind: AstKind, tk: Token): AstNode = initAstNode(s, kind, some(tk))
+
+
+proc ident(s: var State, val: string, token: Option[Token] = none(Token)): AstNode =
+  result = s.initAstNode(Identifier, token)
   result.strVal = val
 
-proc num(s: var State, val: string): AstNode =
-  result = s.initAstNode(NumLiteral)
+proc ident(s: var State, tk: Token): AstNode = s.ident(tk.val, some(tk))
+
+
+proc num(s: var State, val: string, token: Option[Token] = none(Token)): AstNode =
+  result = s.initAstNode(NumLiteral, token)
   result.numVal = val.parseInt
+
+proc num(s: var State, tk: Token): AstNode = s.num(tk.val, some(tk))
+
 
 proc report(s: State, msg: string, reason: ParserFailureReason, token: Token) =
   template errstr: string = &"{s.fileName}:{token.startLine}:{token.startColumn}"
@@ -44,6 +61,7 @@ proc report(s: State, msg: string, reason: ParserFailureReason, token: Token) =
     quit &"[{errstr}] {msg}"
 
 template atTkEnd(s: var State): bool = s.tkPos >= s.tokens.len
+
 proc eat(s: var State): Token =
   result = s.tokens[s.tkPos]
   inc s.tkPos
@@ -53,8 +71,8 @@ proc eat(s: var State): Token =
       PlaceholderTokenFound, result
 
 
-proc parseIndex(s: var State): AstNode =
-  result = s.initAstNode(Index)
+proc parseIndex(s: var State, tk: Token): AstNode =
+  result = s.initAstNode(Index, tk)
 
   # Parse until CloseBrack
   block outer:
@@ -65,10 +83,10 @@ proc parseIndex(s: var State): AstNode =
           break
 
         of Ident:
-          result.iargs.add s.ident(currToken.val)
+          result.iargs.add s.ident(currToken)
 
         of Num:
-          result.iargs.add s.num(currToken.val)
+          result.iargs.add s.num(currToken)
 
         else:
           s.report "Expected an identifier or a number!", UnexpectedToken, currToken
@@ -81,7 +99,7 @@ proc parseIndex(s: var State): AstNode =
           of CloseBrack:
             break outer
           of OpenBrack:
-            var res = s.parseIndex()
+            var res = s.parseIndex(currToken)
             if result.iargs[^1].kind != Identifier:
               s.report "Expected an identifier!", IndexOnNonIndexableValue, currToken
             res.itarget = result.iargs[^1]
@@ -150,13 +168,15 @@ proc parseCondition(s: var State): Condition =
 
   result = Condition(kind: Expr)
 
-  var stack = newSeq[AstNode]()
-
-  var toggle = 0
+  var
+    stack = newSeq[AstNode]()
+    toggle = 0
+    dotLineInfo = initLineInfo()
 
   template handleDotExpr =
     if toggle == 2:
       var item = s.initAstNode(DotExpr)
+      item.lineInfo = dotLineInfo
       item.dright = stack.pop
       item.dleft = stack.pop
 
@@ -165,11 +185,11 @@ proc parseCondition(s: var State): Condition =
   for i in outputStack:
     case i.typ
       of Ident:
-        stack.add s.ident(i.val)
+        stack.add s.ident(i)
         handleDotExpr()
 
       of Num:
-        stack.add s.num(i.val)
+        stack.add s.num(i)
 
         if toggle == 2:
           s.report "Expected an identifier to complete the dot expression!", UnexpectedToken, i
@@ -177,12 +197,13 @@ proc parseCondition(s: var State): Condition =
       of Dot:
         if stack.len < 2:
           s.report "Expected an identifier or a number!", UnexpectedToken, i
+        dotLineInfo = initLineInfo(i)
         handleDotExpr()
         toggle = 1
 
       of BitNot:
         var item = s.initAstNode(FunctionCall)
-        item.fcName = s.ident(i.val)
+        item.fcName = s.ident(i)
         item.fcArgs.add stack.pop
 
         stack.add item
@@ -192,7 +213,7 @@ proc parseCondition(s: var State): Condition =
 
       of {BitAnd, BitOr, ShiftLeft, ShiftRight}:
         var item = s.initAstNode(FunctionCall)
-        item.fcName = s.ident(i.val)
+        item.fcName = s.ident(i)
         item.fcArgs.add stack.pop
         item.fcArgs.add stack.pop
         stack.add item
@@ -205,6 +226,7 @@ proc parseCondition(s: var State): Condition =
 
     if toggle == 2:
       toggle = 0
+      dotLineInfo = initLineInfo()
 
     elif toggle == 1:
       toggle = 2
@@ -275,7 +297,7 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
         case currToken.typ
           of Ident:
             newConditions.add Condition(kind: EnumComparison, targetField: field.name,
-              enumValue: s.ident(currToken.val))
+              enumValue: s.ident(currToken))
 
           of Dedent:
             break
@@ -309,7 +331,7 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
       return HandledConditionalField
 
     elif currToken.typ == OpenBrack:
-      var res = s.parseIndex()
+      var res = s.parseIndex(currToken)
 
       res.itarget = field.typ
       field.typ = res
@@ -326,13 +348,15 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
   if currToken.typ == Dedent:
     return FoundDedent
 
+  field.lineInfo = initLineInfo(currToken)
+
   # Parse protocol version field is present in
   if currToken.typ == OpenParen:
     currToken = s.eat()
     if currToken.typ != Num:
       s.report "Expected a number!", UnexpectedToken, currToken
 
-    field.proto = s.num(currToken.val)
+    field.proto = s.num(currToken)
 
     currToken = s.eat()
     if currToken.typ != CloseParen:
@@ -346,7 +370,7 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
   # Parse field name
   if currToken.typ != Ident:
     s.report "Expected an identifier!", UnexpectedToken, currToken
-  field.name = s.ident(currToken.val)
+  field.name = s.ident(currToken)
 
   currToken = s.eat()
   if currToken.typ != Colon:
@@ -356,10 +380,10 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
   currToken = s.eat()
   case currToken.typ
     of Ident:
-      field.typ = s.ident(currToken.val)
+      field.typ = s.ident(currToken)
 
     of Null:
-      field.typ = s.initAstNode(NullLiteral)
+      field.typ = s.initAstNode(NullLiteral, currToken)
 
     else:
       s.report "Expected an identifier or a null literal!", UnexpectedToken, currToken
@@ -376,8 +400,7 @@ proc parseEnumField(s: var State, order: int): AstNode =
     currToken = s.eat()
     if currToken.typ != Num:
       s.report "Expected a number!", UnexpectedToken, currToken
-
-    result.efProto = s.num(currToken.val)
+    result.efProto = s.num(currToken)
 
     currToken = s.eat()
     if currToken.typ != CloseParen:
@@ -393,8 +416,7 @@ proc parseEnumField(s: var State, order: int): AstNode =
     currToken = s.eat()
     if currToken.typ != Num:
       s.report "Expected a number!", UnexpectedToken, currToken
-
-    result.efValue = s.num(currToken.val)
+    result.efValue = s.num(currToken)
 
     currToken = s.eat()
     if currToken.typ != CloseBrace:
@@ -406,14 +428,14 @@ proc parseEnumField(s: var State, order: int): AstNode =
     result.efValue = s.initAstNode(NumLiteral)
 
   # Parse the enum identifier
-  result.efName = s.ident(currToken.val)
+  result.efName = s.ident(currToken)
   # Set the order definition for the enum field
   result.efOrder = order
 
 
 proc parseEnum(s: var State, ident: Token): AstNode =
-  result = s.initAstNode(EnumTypeDef)
-  result.eName = s.ident(ident.val)
+  result = s.initAstNode(EnumTypeDef, ident)
+  result.eName = s.ident(ident)
 
   var currToken = s.eat()
   if currToken.typ != OpenBrack:
@@ -423,8 +445,7 @@ proc parseEnum(s: var State, ident: Token): AstNode =
   currToken = s.eat()
   if currToken.typ != Ident:
     s.report "Expected an identifier!", GenericWithMissingParameters, currToken
-
-  result.eType = s.ident(currToken.val)
+  result.eType = s.ident(currToken)
 
   currToken = s.eat()
   if currToken.typ != CloseBrack:
@@ -460,10 +481,24 @@ proc parseEnum(s: var State, ident: Token): AstNode =
 
 proc parseStruct(s: var State, ident: Token): AstNode =
   # Struct parsing is very similar to packet parsing so logic can be reused
-  result = s.initAstNode(StructDef)
-  result.sName = s.ident(ident.val)
+  result = s.initAstNode(StructDef, ident)
+  result.sName = s.ident(ident)
 
   var currToken = s.eat()
+
+  template handleConstructor(p: AstNode = nil) =
+    let
+      proto: AstNode = if p == nil: s.initAstNode(NumLiteral) else: p
+      name = s.ident(currToken)
+
+    currToken = s.eat()
+    if currToken.typ != Colon:
+      s.report "Expected a colon!", UnexpectedToken, currToken
+
+    currToken = s.eat()
+    if currToken.typ != Ident:
+      s.report "Expected an identifier!", GenericWithMissingParameters, currToken
+    result.sArgs.add (proto, name, s.ident(currToken))
 
   case currToken.typ
     of OpenBrack:
@@ -477,18 +512,19 @@ proc parseStruct(s: var State, ident: Token): AstNode =
           of Comma:
             continue
 
+          of OpenParen:
+            currToken = s.eat()
+            if currToken.typ != Num:
+              s.report "Expected a number!", UnexpectedToken, currToken
+            let proto = s.num(currToken)
+
+            currToken = s.eat()
+            if currToken.typ != CloseParen:
+              s.report "Expected a close parenthesis!", UnexpectedToken, currToken
+            handleConstructor(proto)
+
           of Ident:
-            var name = s.ident(currToken.val)
-
-            currToken = s.eat()
-            if currToken.typ != Colon:
-              s.report "Expected a colon!", UnexpectedToken, currToken
-
-            currToken = s.eat()
-            if currToken.typ != Ident:
-              s.report "Expected an identifier!", GenericWithMissingParameters, currToken
-
-            result.sArgs.add (s.ident(currToken.val), name)
+            handleConstructor()
 
           else:
             s.report "Expected an identifier or a close bracket!", UnexpectedToken, currToken
@@ -542,7 +578,7 @@ proc parseProtoIDPair(s: var State): ProtoIDPair =
   var currToken = s.eat()
   if currToken.typ != Num:
     s.report "Expected a number!", UnexpectedToken, currToken
-  result.proto = s.num(currToken.val)
+  result.proto = s.num(currToken)
 
   currToken = s.eat()
   if currToken.typ != Comma:
@@ -551,12 +587,12 @@ proc parseProtoIDPair(s: var State): ProtoIDPair =
   currToken = s.eat()
   if currToken.typ != Num:
     s.report "Expected a number!", UnexpectedToken, currToken
-  result.packet = s.num(currToken.val)
+  result.packet = s.num(currToken)
 
 
 proc parsePacket(s: var State, ident: Token): AstNode =
-  result = s.initAstNode(PacketDef)
-  result.pName = s.ident(ident.val)
+  result = s.initAstNode(PacketDef, ident)
+  result.pName = s.ident(ident)
 
   var currToken: Token
 
@@ -587,7 +623,6 @@ proc parsePacket(s: var State, ident: Token): AstNode =
 
   if currToken.val notin ["Client", "Server"]:
     s.report &"Expected 'Client' or 'Server', got '{currToken.val}'!", InvalidPacketDirection, currToken
-
   result.pDirection = if currToken.val == "Client": Client else: Server
 
   currToken = s.eat()
