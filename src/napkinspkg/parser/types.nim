@@ -1,4 +1,5 @@
-import std/strutils
+import std/[strutils]
+from macros import LineInfo # No use reinventing the wheel
 
 import ../lexer
 
@@ -9,9 +10,6 @@ type
   ParserFailureReason* = enum
     UnexpectedToken, GenericWithMissingParameters, ExpectedEnumDefinition, MalformedEnumDefinition,
     IndexOnNonIndexableValue, InvalidPacketDirection, PlaceholderTokenFound
-
-  NapkinsLineInfo* = object
-    line*, col*: int
 
   NapkinsParserError* = object of CatchableError
     fileName*: string
@@ -115,7 +113,7 @@ type
         fcName*: AstNode                              # Identifier - Function name, `!`, `<<`, `>>`, `&` and `|`
         fcArgs*: seq[AstNode]                         # seq[Identifier | NumLiteral] - Function arguments
 
-    lineInfo*: NapkinsLineInfo
+    lineInfo*: LineInfo
     when defined(napkinNodeIds):
       id*: int
 
@@ -270,7 +268,7 @@ func registerType*(name: string, params: varargs[set[AstKind]] = newSeq[set[AstK
 template isGeneric*(t: RegisteredType): bool = bool(t.params.len)
 
 # TODO: Text Component, JSON Text Component, Entity Metadata, Slot
-const
+let
   NapkinTypes* = [
     # Array[Size, T] - Size refers to anything that defines the length, T refers to the type
     registerType("Array", {Identifier, NumLiteral}, {Identifier, Index}),
@@ -305,9 +303,15 @@ const
   OrdinalNapkinTypes* = NapkinTypes[NapkinTypes.find(registerType("VInt32"))..NapkinTypes.find(registerType("SInt64"))]
 
 proc contains*(nt: openArray[RegisteredType], name: string): bool =
-  for t in nt: (if t.name == name: return true)
+  for i in nt:
+    if i.name == name:
+      return true
 
 proc `[]`*(nt: openArray[RegisteredType], name: string): RegisteredType =
-  for t in nt: (if t.name == name: return t)
+  for i in nt:
+    if i.name == name:
+      return i
 
 proc nodes*(state: State): seq[AstNode] = state.nodes
+
+export LineInfo

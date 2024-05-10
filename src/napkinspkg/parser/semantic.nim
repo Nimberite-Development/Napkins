@@ -1,17 +1,17 @@
-import std/sugar
+import std/[strformat, sequtils, tables]
 
 import ./types
 
 # TODO: Error reporting function
 
 type
-  SemanticPass* = object
+  InitialSemanticPass* = object
     nodes*: seq[AstNode]
     registeredTypes*: seq[RegisteredType]
 
-proc initSemanticPass*(nodes: seq[AstNode]): SemanticPass = SemanticPass(nodes: nodes, registeredTypes: @NapkinTypes)
+proc initSemanticPass*(nodes: seq[AstNode]): InitialSemanticPass = InitialSemanticPass(nodes: nodes, registeredTypes: @NapkinTypes)
 
-proc processEnum(sp: var SemanticPass, n: AstNode): AstNode =
+proc processEnum(sp: var InitialSemanticPass, n: AstNode): AstNode =
   let
     name = n.eName.strVal
     typ = n.eType.strVal
@@ -23,7 +23,9 @@ proc processEnum(sp: var SemanticPass, n: AstNode): AstNode =
 
   return n
 
-proc validateType(sp: var SemanticPass, n: AstNode, identsInScope: seq[string] = @[]): bool =
+
+proc validateType(sp: var InitialSemanticPass, n: AstNode, typesToValidate: var seq[AstNode],
+    identsInScope = newSeq[string]()): bool =
   case n.kind
     of Identifier:
       if n.strVal notin sp.registeredTypes:
@@ -49,29 +51,50 @@ proc validateType(sp: var SemanticPass, n: AstNode, identsInScope: seq[string] =
         if n.iargs[x].kind notin typ.params[x]:
           quit "Invalid type for index: " & $n.iargs[x]
 
+      for i in n.iargs:
+        if i.kind == Identifier:
+          if i.strVal in identsInScope:
+            discard
+
+          elif i.strVal in NapkinTypes:
+            typesToValidate.add i
+
+        elif i.kind == NumLiteral:
+          discard
+
+        elif i.kind == Index:
+          typesToValidate.add i.itarget
+
+        else:
+          quit "Invalid AST!"
+
     else:
       quit "Invalid AST!"
 
   return true
 
-proc processStruct(sp: var SemanticPass, n: AstNode): AstNode =
+
+proc processStruct(sp: var InitialSemanticPass, n: AstNode): AstNode =
   type
     ProtoNameTypeTriple = tuple[proto: AstNode, name: AstNode, typ: AstNode]
     ProtoNameTypAstTyp = tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]
 
   template proto(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.proto
   template name(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.name
-  template typAst(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.typ
+  #template typAst(i: ProtoNameTypAstTyp): AstNode = i.protoNameTyp.typ
 
+  template typName(i: AstNode): string =
+    (if i.sfType.kind == Identifier: i.sfType.strVal elif i.sfType.kind == Index: i.sfType.itarget.strVal else: quit("Invalid AST!"))
   template typName(i: ProtoNameTypeTriple): string =
     (if i.typ.kind == Identifier: i.typ.strVal elif i.typ.kind == Index: i.typ.itarget.strVal else: quit("Invalid AST!"))
 
   result = n
   let structName = result.sName.strVal
   var
-    types = newSeq[set[AstKind]]()
-    constructors = newSeq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]()
-    fieldNames = newSeq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]()
+    types: seq[set[AstKind]]
+    constructors: seq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]
+    fields: seq[tuple[protoNameTyp: ProtoNameTypeTriple, typ: RegisteredType]]
+    typesToValidate: seq[AstNode]
 
   for i in result.sArgs:
     types.add {Identifier}
@@ -82,17 +105,63 @@ proc processStruct(sp: var SemanticPass, n: AstNode): AstNode =
       if it.name.strVal == i.name.strVal:
         dup.add it
 
-    echo i
-    if not sp.validateType(i.typ):
-      quit "Invalid type: " & $i.typName
+    for it in dup:
+      if it.proto.numVal < i.proto.numVal:
+        quit &"{i.name.strVal} supports protocol version {i.proto.numVal} and above, while the given definition is " &
+          &"lower than previously defined! To resolve this, place {it.name.strVal} of protocol version {it.proto.numVal}" &
+          &" before the definition for protocol version {i.proto.numVal}!"
+
+      elif it.proto.numVal == i.proto.numVal:
+        quit &"{i.name.strVal} already exists for protocol version {i.proto.numVal} and above with the same type!"
+
+
+    typesToValidate.add i.typ
+    while typesToValidate.len > 0:
+      let typ = typesToValidate.pop()
+      if not sp.validateType(typ, typesToValidate, constructors.mapIt(it.name.strVal)):
+        quit "Invalid type: " & $typ
 
     constructors.add (i, sp.registeredTypes[i.typName])
 
-  #for 
-
   sp.registeredTypes.add registerType(structName, params=types)
 
-proc process*(sp: var SemanticPass): seq[AstNode] =
+  for field in result.sFieldDefs:
+    typesToValidate.add field.sfType
+    while typesToValidate.len > 0:
+      let typ = typesToValidate.pop()
+      if not sp.validateType(typ, typesToValidate, fields.mapIt(it.name.strVal) & constructors.mapIt(it.name.strVal)):
+        quit "Invalid type: " & $typ
+
+    fields.add ((field.sfProto, field.sfName, field.sfType), sp.registeredTypes[field.typName])
+
+
+proc processPacket(sp: var InitialSemanticPass, n: AstNode): AstNode =
+  result = n
+
+  var protoIds: seq[ProtoIDPair]
+
+  for i in result.protoIdPairs:
+    for x in protoIds:
+      if x.proto >= i.proto:
+        quit "Protocol-Packet ID pairs must be in ascending order sorted by protocol!"
+
+    protoIds.add i
+
+  var
+    typesToValidate: seq[AstNode]
+    fields: seq[AstNode]
+
+  for field in result.pFieldDefs:
+    typesToValidate.add field.pfType
+
+    while typesToValidate.len > 0:
+      let typ = typesToValidate.pop()
+      if not sp.validateType(typ, typesToValidate, fields.mapIt(it.pfName.strVal)):
+        quit "Invalid type: " & $typ
+
+    fields.add field
+
+proc process*(sp: var InitialSemanticPass): seq[AstNode] =
   for n in sp.nodes:
     result.add case n.kind
       of EnumTypeDef:
@@ -102,8 +171,7 @@ proc process*(sp: var SemanticPass): seq[AstNode] =
         sp.processStruct(n)
 
       of PacketDef:
-        echo "Unimplemented!"
-        break
+        sp.processPacket(n)
 
       else:
         echo "Invalid node in this context"

@@ -17,15 +17,17 @@ const PrecedenceTable = {
 }.toTable
 template isLeftPrecedence(op: TkType): bool = op != BitNot
 
-proc initLineInfo(tk: Option[Token] = none(Token)): NapkinsLineInfo =
-  if tk.isSome:
-    NapkinsLineInfo(line: tk.unsafeGet.startLine, col: tk.unsafeGet.startColumn)
+proc initLineInfo(s: State, tk: Option[Token] = none(Token)): LineInfo =
+  result = if tk.isSome:
+    LineInfo(line: tk.unsafeGet.startLine, column: tk.unsafeGet.startColumn)
   else:
-    NapkinsLineInfo(line: -1, col: -1)
-proc initLineInfo(tk: Token): NapkinsLineInfo = initLineInfo(some(tk))
+    LineInfo(line: -1, column: -1)
+  result.filename = s.fileName
+
+proc initLineInfo(s: State, tk: Token): LineInfo = initLineInfo(s, some(tk))
 
 proc initAstNode(s: var State, kind: AstKind, token: Option[Token] = none(Token)): AstNode =
-  result = AstNode(kind: kind, lineInfo: initLineInfo(token))
+  result = AstNode(kind: kind, lineInfo: s.initLineInfo(token))
 
   when defined(napkinNodeIds):
     result.id = s.nodeId
@@ -171,7 +173,7 @@ proc parseCondition(s: var State): Condition =
   var
     stack = newSeq[AstNode]()
     toggle = 0
-    dotLineInfo = initLineInfo()
+    dotLineInfo = s.initLineInfo()
 
   template handleDotExpr =
     if toggle == 2:
@@ -197,7 +199,7 @@ proc parseCondition(s: var State): Condition =
       of Dot:
         if stack.len < 2:
           s.report "Expected an identifier or a number!", UnexpectedToken, i
-        dotLineInfo = initLineInfo(i)
+        dotLineInfo = s.initLineInfo(i)
         handleDotExpr()
         toggle = 1
 
@@ -226,7 +228,7 @@ proc parseCondition(s: var State): Condition =
 
     if toggle == 2:
       toggle = 0
-      dotLineInfo = initLineInfo()
+      dotLineInfo = s.initLineInfo()
 
     elif toggle == 1:
       toggle = 2
@@ -348,7 +350,7 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
   if currToken.typ == Dedent:
     return FoundDedent
 
-  field.lineInfo = initLineInfo(currToken)
+  field.lineInfo = s.initLineInfo(currToken)
 
   # Parse protocol version field is present in
   if currToken.typ == OpenParen:
