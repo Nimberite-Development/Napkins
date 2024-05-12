@@ -88,6 +88,7 @@ type
         sfProto*: AstNode                             # NumLiteral
         sfType*: AstNode                              # Identifier
         sfConditions*: seq[Condition]                 # seq[Condition] - Used for conditional fields
+        sfIgnored*: bool                              # ? Used for constructor-defined fields
         sfOrder*: int                                 # ? Order is defined on the parser level
 
       of StructDef:
@@ -118,6 +119,7 @@ type
       id*: int
 
   State* = object
+    # TODO: Utilise Data-Oriented Design
     throwOnError*: bool ## Throws an error instead of quiting
     fileName*: string
     tkPos*, ndPos*: int

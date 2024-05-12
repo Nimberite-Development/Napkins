@@ -2,6 +2,9 @@
 A basic data language for defining the differences of the MC protocol across different MC
 protocol versions!
 
+I need to also figure out a way to accurately and cleanly document the format so that it
+can be used by more people, code examples can only do so much.
+
 ## How-To
 To define a packet, you have to write the name of the packet (e.g. `SpawnEntity`), followed by a
 `(`, then the protocol version it was introduced in (e.g. `4`), followed by the ID of a packet

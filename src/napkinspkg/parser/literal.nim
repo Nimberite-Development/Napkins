@@ -293,13 +293,32 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
 
       var newField: AstNode = nil
 
+      var skip = false
+      # TODO: Allow referring to fields of struct objects?
       while not s.atTkEnd:
         var newConditions = conditions
-        currToken = s.eat()
+        if not skip: currToken = s.eat()
+        skip = false
         case currToken.typ
           of Ident:
-            newConditions.add Condition(kind: EnumComparison, targetField: field.name,
-              enumValue: s.ident(currToken))
+            let prev = currToken
+            currToken = s.eat()
+            if currToken.typ == Dot:
+              let dotExpr = s.initAstNode(DotExpr, currToken)
+
+              currToken = s.eat()
+              if currToken.typ != Ident:
+                s.report "Expected an identifier!", UnexpectedToken, currToken
+
+              dotExpr.dleft = s.ident(prev)
+              dotExpr.dright = s.ident(currToken)
+
+              newConditions.add Condition(kind: EnumComparison, targetField: field.name,
+                enumValue: dotExpr)
+            else:
+              skip = true
+              newConditions.add Condition(kind: EnumComparison, targetField: field.name,
+                enumValue: s.ident(currToken))
 
           of Dedent:
             break
