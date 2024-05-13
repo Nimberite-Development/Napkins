@@ -9,7 +9,7 @@ type
 
   ParserFailureReason* = enum
     UnexpectedToken, GenericWithMissingParameters, ExpectedEnumDefinition, MalformedEnumDefinition,
-    IndexOnNonIndexableValue, InvalidPacketDirection, PlaceholderTokenFound
+    IndexOnNonIndexableValue, InvalidPacketDirection, ProtocolVersionTooLow, PlaceholderTokenFound
 
   NapkinsParserError* = object of CatchableError
     fileName*: string
@@ -50,6 +50,8 @@ type
       of Expr:
         exp*: AstNode # FunctionCall
 
+    proto*: AstNode   # NumLiteral
+
   AstNode* {.acyclic.} = ref object
     # TODO: Add line info data - Use `std/macros`' `LineInfo` or our own type?
     case kind*: AstKind
@@ -74,6 +76,7 @@ type
         pfName*: AstNode                              # Identifier
         pfProto*: AstNode                             # NumLiteral
         pfType*: AstNode                              # Identifier
+        pfSymType*: int                               # ? Index to internal list of `RegisteredType`s
         pfConditions*: seq[Condition]                 # seq[Condition] - Used for conditional fields
         pfOrder*: int                                 # ? Order is defined on the parser level
 
@@ -87,6 +90,7 @@ type
         sfName*: AstNode                              # Identifier
         sfProto*: AstNode                             # NumLiteral
         sfType*: AstNode                              # Identifier
+        sfSymType*: int                               # ? Index to internal list of `RegisteredType`s
         sfConditions*: seq[Condition]                 # seq[Condition] - Used for conditional fields
         sfIgnored*: bool                              # ? Used for constructor-defined fields
         sfOrder*: int                                 # ? Order is defined on the parser level
@@ -146,6 +150,8 @@ proc `$`*(c: Condition, depth: int = 0): string =
       result = repeat(" ", depth * 2) & "Expr ->\n"
       result.add repeat(" ", (depth + 1) * 2) & `$`(c.exp, depth + 2)
 
+  result.add '\n' & repeat(" ", depth * 2) & "Proto: " & `$`(c.proto, depth + 1)
+
 proc `$`*(n: AstNode, depth: int = 0): string =
   case n.kind
     of NullLiteral:
@@ -204,6 +210,7 @@ proc `$`*(n: AstNode, depth: int = 0): string =
       result.add repeat(" ", (depth + 1) * 2) & "Order: "
       result.addQuoted n.sfOrder
       result.add '\n'
+      result.add repeat(" ", (depth + 1) * 2) & "Ignored: " & capitalizeAscii($n.sfIgnored) & '\n'
       result.add repeat(" ", (depth + 1) * 2) & "Conditions:\n"
       for i in n.sfConditions: result.add `$`(i, depth + 2) & "\n\n"
       if n.sfConditions.len > 0:

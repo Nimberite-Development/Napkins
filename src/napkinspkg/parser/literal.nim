@@ -63,6 +63,10 @@ proc report(s: State, msg: string, reason: ParserFailureReason, token: Token) =
     quit &"[{errstr}] {msg}"
 
 template atTkEnd(s: var State): bool = s.tkPos >= s.tokens.len
+template labelledWhile(i, cond, body: untyped) =
+  block i:
+    while cond:
+      body
 
 proc eat(s: var State): Token =
   result = s.tokens[s.tkPos]
@@ -77,42 +81,44 @@ proc parseIndex(s: var State, tk: Token): AstNode =
   result = s.initAstNode(Index, tk)
 
   # Parse until CloseBrack
-  block outer:
+  labelledWhile outer, not s.atTkEnd:
+    var currToken = s.eat()
+    case currToken.typ
+      of CloseBrack:
+        break
+
+      of Ident:
+        result.iargs.add s.ident(currToken)
+
+      of Num:
+        result.iargs.add s.num(currToken)
+
+      else:
+        s.report "Expected an identifier or a number!", UnexpectedToken, currToken
+
     while not s.atTkEnd:
-      var currToken = s.eat()
+      currToken = s.eat()
       case currToken.typ
-        of CloseBrack:
+        of Comma:
           break
-
-        of Ident:
-          result.iargs.add s.ident(currToken)
-
-        of Num:
-          result.iargs.add s.num(currToken)
-
+        of CloseBrack:
+          break outer
+        of OpenBrack:
+          var res = s.parseIndex(currToken)
+          if result.iargs[^1].kind != Identifier:
+            s.report "Expected an identifier!", IndexOnNonIndexableValue, currToken
+          res.itarget = result.iargs[^1]
+          result.iargs[^1] = res
         else:
-          s.report "Expected an identifier or a number!", UnexpectedToken, currToken
-
-      while not s.atTkEnd:
-        currToken = s.eat()
-        case currToken.typ
-          of Comma:
-            break
-          of CloseBrack:
-            break outer
-          of OpenBrack:
-            var res = s.parseIndex(currToken)
-            if result.iargs[^1].kind != Identifier:
-              s.report "Expected an identifier!", IndexOnNonIndexableValue, currToken
-            res.itarget = result.iargs[^1]
-            result.iargs[^1] = res
-          else:
-            s.report "Expected a comma, an index or a close bracket!", UnexpectedToken, currToken
+          s.report "Expected a comma, an index or a close bracket!", UnexpectedToken, currToken
 
 
-proc parseCondition(s: var State): Condition =
+proc parseCondition(s: var State, tk: Token = Token(typ: Num, val: "0", startLine: -1, startColumn: -1)): Condition =
   # Parses conditions such as `@ mask & Value`
   var currToken: Token
+
+  if tk.typ != Num:
+    s.report "Expected a number!", UnexpectedToken, tk
 
   var
     opStack = newSeq[Token]()
@@ -168,7 +174,7 @@ proc parseCondition(s: var State): Condition =
     if outputStack[i].typ == BitNot:
       swap(outputStack[i], outputStack[i - 1])
 
-  result = Condition(kind: Expr)
+  result = Condition(kind: Expr, proto: s.num(tk))
 
   var
     stack = newSeq[AstNode]()
@@ -261,13 +267,13 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
 
     res
   template `proto=`(a: var AstNode, b: AstNode) = (when isPacket: a.pfProto = b else: a.sfProto = b)
+  template `proto`(a: var AstNode): AstNode = (when isPacket: a.pfProto else: a.sfProto)
   template `name=`(a: var AstNode, b: AstNode) = (when isPacket: a.pfName = b else: a.sfName = b)
 
-  if currToken.typ == At:
-    # Handle if statements here (this is what `@` represents)
+  template atHandler(tk: Token = Token(typ: Num, val: "0", startLine: -1, startColumn: -1)) =
     var
-      newConditions = conditions & s.parseCondition()
-      newField: AstNode = nil
+      newConditions {.inject.} = conditions & s.parseCondition(tk)
+      newField {.inject.}: AstNode = nil
 
     currToken = s.eat()
     if currToken.typ != Indent:
@@ -278,12 +284,22 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
 
       case res
         of AddNewField:
+          if newConditions.len > 0:
+            if newField.proto.numVal == 0:
+              newField.proto = newConditions[^1].proto
+            elif newField.proto.numVal < newConditions[^1].proto.numVal:
+              s.report &"The field expects a protocol version of `{newConditions[^1].proto.numVal}` and higher, " &
+                &"but got `{newField.proto.numVal}`!", UnexpectedToken, currToken
           packet.fieldDefs.add newField
           inc order
         of FoundDedent: break
         of {HandledConditionalField, HandledIndex}: discard
 
     return HandledConditionalField
+
+  if currToken.typ == At:
+    # Handle if statements here (this is what `@` represents)
+    atHandler()
 
   elif field != nil:
     if currToken.typ == Arrow:
@@ -299,6 +315,23 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
         var newConditions = conditions
         if not skip: currToken = s.eat()
         skip = false
+
+        let proto = if currToken.typ == OpenParen:
+            currToken = s.eat()
+            if currToken.typ != Num:
+              s.report "Expected a number!", UnexpectedToken, currToken
+
+            let proto = s.num(currToken)
+
+            currToken = s.eat()
+            if currToken.typ != CloseParen:
+              s.report "Expected a closing parenthesis!", UnexpectedToken, currToken
+
+            proto
+
+          else:
+            s.initAstNode(NumLiteral)
+
         case currToken.typ
           of Ident:
             let prev = currToken
@@ -314,11 +347,16 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
               dotExpr.dright = s.ident(currToken)
 
               newConditions.add Condition(kind: EnumComparison, targetField: field.name,
-                enumValue: dotExpr)
+                enumValue: dotExpr, proto: proto)
             else:
               skip = true
               newConditions.add Condition(kind: EnumComparison, targetField: field.name,
-                enumValue: s.ident(currToken))
+                enumValue: s.ident(currToken), proto: proto)
+
+              if newConditions.len > 1:
+                if newConditions[^2].proto < newConditions[^1].proto:
+                  s.report "The given protocol version for this condition is lower than " &
+                    "the condition before it, when it should be equal or higher!", ProtocolVersionTooLow, currToken
 
           of Dedent:
             break
@@ -344,6 +382,12 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
 
           case res
             of AddNewField:
+              if newConditions.len > 0:
+                if newField.proto.numVal == 0:
+                  newField.proto = newConditions[^1].proto
+                elif newField.proto.numVal < newConditions[^1].proto.numVal:
+                  s.report &"The field expects a protocol version of `{newConditions[^1].proto.numVal}` and higher, " &
+                    &"but got `{newField.proto.numVal}`!", UnexpectedToken, currToken
               packet.fieldDefs.add newField
               inc order
             of FoundDedent: break
@@ -388,10 +432,16 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
   else:
     field.proto = s.initAstNode(NumLiteral)
 
-  # Parse field name
-  if currToken.typ != Ident:
-    s.report "Expected an identifier!", UnexpectedToken, currToken
-  field.name = s.ident(currToken)
+  # Parse field
+  case currToken.typ
+    of Ident:
+      # Field name
+      field.name = s.ident(currToken)
+    of At:
+      # Field condition
+      atHandler(Token(typ: Num, val: $field.proto.numVal, startLine: field.lineInfo.line, startColumn: field.lineInfo.column))
+    else:
+      s.report "Expected an identifier or a conditional statement (beginning with `@`)!", UnexpectedToken, currToken
 
   currToken = s.eat()
   if currToken.typ != Colon:

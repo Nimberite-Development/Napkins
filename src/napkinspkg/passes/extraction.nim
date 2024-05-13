@@ -42,6 +42,24 @@ proc processEnum*(p: var ExtractionPass, n: AstNode): AstNode =
 proc processStruct*(p: var ExtractionPass, n: AstNode): AstNode =
   result = n
 
+  var argsTable: Table[string, tuple[proto, name, typ: AstNode, order: int]]
+  var order = -1
+
+  for i in n.sArgs:
+    inc order
+    if not argsTable.hasKey(i.name.strVal):
+      if p.pvn >= i.proto.numVal:
+        argsTable[i.name.strVal] = (i.proto, i.name, i.typ, order)
+      continue
+  
+  var args = toSeq(argsTable.values)
+
+  args.sort do (a, b: tuple[proto, name, typ: AstNode, order: int]) -> int: cmp(a.order, b.order)
+
+  result.sArgs = @[]
+
+  for i in args: result.sArgs.add (i.proto, i.name, i.typ)
+
   var fieldTable: Table[string, AstNode]
   
   for i in n.sFieldDefs:

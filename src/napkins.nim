@@ -2,7 +2,7 @@ import ./napkinspkg/lexer
 
 import ./napkinspkg/parser/[literal, types]
 
-import ./napkinspkg/passes/[final_semantic, extraction, initial_semantic, base]
+import ./napkinspkg/passes/[semantic, extraction, base]
 
 echo '\n'
 
@@ -11,13 +11,10 @@ let tokens = lxr.lex()
 
 let ast = parse(tokens, "test.nmp", true).nodes
 
-var sp = initInitalSemanticPass("test.nmp", ast, true)
-let nodes = sp.process()
+var ep = initExtractionPass("test.nmp", ast, 850, true)
+let nodes = ep.process()
 
-var ep = initExtractionPass("test.nmp", nodes, 850, true)
-let nodes2 = ep.process()
+#var sp = initSemanticPass("test.nmp", nodes, true)
+#let nodes2 = sp.process()
 
-var fp = initFinalSemanticPass("test.nmp", nodes2, true)
-let nodes3 = fp.process()
-
-echo nodes3
+echo nodes
