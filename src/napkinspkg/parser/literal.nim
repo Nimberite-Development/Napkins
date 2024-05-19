@@ -302,15 +302,16 @@ proc parsePacketOrStructField(s: var State, packet, field: var AstNode, conditio
     atHandler()
 
   elif field != nil:
+    # TODO: This should probably be put into a template so we can allow enum comparisons against fields of stored structs
     if currToken.typ == Arrow:
       currToken = s.eat()
       if currToken.typ != Indent:
         s.report "Expected an indented block!", UnexpectedToken, currToken
 
-      var newField: AstNode = nil
+      var
+        newField: AstNode = nil
+        skip = false
 
-      var skip = false
-      # TODO: Allow referring to fields of struct objects?
       while not s.atTkEnd:
         var newConditions = conditions
         if not skip: currToken = s.eat()

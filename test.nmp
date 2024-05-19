@@ -17,7 +17,7 @@ PlayerAction -> Struct[actions: SInt8]:
 
   @ actions & PlayerInfoUpdateActions.InitializeChat:
     hasSignatureData: Bool
-    @ hasSignatureData:
+    @ hasSignatureData: # Should use an optional type here, since it's a single optional field
       chatSessionId: UUID
       publicKeyExpiryTime: SInt64
       encodedPublicKeySize: ConstrainU[VInt32, 512]
@@ -36,7 +36,7 @@ PlayerAction -> Struct[actions: SInt8]:
 
   @ actions & PlayerInfoUpdateActions.UpdateDisplayName:
     hasDisplayName: Bool
-    @ hasDisplayName:
+    @ hasDisplayName: # Should use an optional type here, since it's a single optional field
       displayName: String[5]
 
 PlayerInfo -> Struct[actions: SInt8]:

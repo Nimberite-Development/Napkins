@@ -9,7 +9,7 @@ import ./base
 import ../parser/types
 
 type
-  ExtractionPass* = object of BasePass
+  ExtractionPass* = ref object of BasePass
     pvn*: int
 
 proc initExtractionPass*(fileName: string, nodes: seq[AstNode], pvn: int, throwOnError = false): ExtractionPass =
