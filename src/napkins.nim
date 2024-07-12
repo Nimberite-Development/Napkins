@@ -1,20 +1,32 @@
-import ./napkinspkg/lexer
+import std/strformat
 
-import ./napkinspkg/parser/[literal, types]
+import ./napkinspkg/combinator
 
-import ./napkinspkg/passes/[semantic, extraction, base]
+const
+  CodeA = "string:wah"
+  CodeB = "integer:7"
+  CodeC = "dice:2d8"
+  CodeD = "nil:nil"
 
-echo '\n'
+let typeParser = (identifierParser & textParser(":")).chain(state, input, position):
+  let typ = result.state.ast[result.nodes[0].int].identVal
+  let lineInfo = result.state.lineInfoAt(position)
 
-var lxr = initLexer(readFile("test.nmp"), "test.nmp", true)
-let tokens = lxr.lex()
+  case typ
+  of "string":
+    discard
+  of "integer":
+    discard
+  of "dice":
+    discard
+  else:
+    return ParseResult(state: result.state, isOk: false, error: ParseErrorTree(isBranch: false,
+      reason: &"Found the unknown type `{typ}` while parsing at line {lineInfo.line}, column {lineInfo.column}!"))
 
-let ast = parse(tokens, "test.nmp", true).nodes
+for code in [CodeA, CodeB, CodeC, CodeD]:
+  let res = (newlineLocator & typeParser)(State(), code, 0)
 
-var ep = initExtractionPass("test.nmp", ast, 850, true)
-let nodes = ep.process()
-
-var sp = initSemanticPass("test.nmp", nodes, true)
-let nodes2 = sp.process()
-
-echo nodes2
+  if res.isOk:
+    echo res
+  else:
+    echo res.error.dumpTree
